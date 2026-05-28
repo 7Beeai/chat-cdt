@@ -44,9 +44,17 @@ command -v pnpm >/dev/null || { log "instalando pnpm"; sudo npm i -g pnpm; }
 command -v pm2  >/dev/null || { log "instalando pm2";  sudo npm i -g pm2;  }
 log "pnpm $(pnpm -v) | pm2 $(pm2 -v)"
 
-# ---------- 4. Caddy ----------
-if ! command -v caddy >/dev/null; then
-  log "instalando Caddy"
+# ---------- 4. Web server (auto-detect nginx vs Caddy) ----------
+WEB_SERVER=""
+if systemctl is-active --quiet nginx 2>/dev/null || command -v nginx >/dev/null; then
+  WEB_SERVER="nginx"
+  log "nginx detectado — vou usá-lo (não instalar Caddy)"
+elif command -v caddy >/dev/null; then
+  WEB_SERVER="caddy"
+  log "caddy detectado, usando"
+else
+  WEB_SERVER="caddy"
+  log "nem nginx nem caddy detectados — instalando Caddy"
   sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https
   curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
     | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
@@ -111,20 +119,26 @@ if ! systemctl is-enabled pm2-"$USER" >/dev/null 2>&1; then
   pm2 save
 fi
 
-# ---------- 10. Caddy ----------
-CADDY_SNIPPET="/etc/caddy/conf.d/chat-cdt.caddy"
-if [ ! -f /etc/caddy/Caddyfile ] || ! grep -q "import conf.d/\*.caddy" /etc/caddy/Caddyfile 2>/dev/null; then
-  warn "/etc/caddy/Caddyfile não importa conf.d/*. Garantindo isso."
-  if [ -f /etc/caddy/Caddyfile ]; then
-    grep -q "import /etc/caddy/conf.d/\*.caddy" /etc/caddy/Caddyfile \
-      || echo "import /etc/caddy/conf.d/*.caddy" | sudo tee -a /etc/caddy/Caddyfile >/dev/null
+# ---------- 10. Web server config ----------
+if [ "$WEB_SERVER" = "nginx" ]; then
+  log "instalando bloco nginx em sites-available/chat-cdt"
+  sudo cp "$APP_DIR/infra/nginx-chat-cdt.conf" /etc/nginx/sites-available/chat-cdt
+  sudo ln -sf /etc/nginx/sites-available/chat-cdt /etc/nginx/sites-enabled/chat-cdt
+  sudo nginx -t || die "config nginx inválida"
+  sudo systemctl reload nginx
+  log "nginx recarregado (HTTP funcionando — TLS ainda precisa do certbot)"
+  warn "👉 Rodar manualmente (depois desse script): sudo certbot --nginx -d $DOMAIN"
+else
+  CADDY_SNIPPET="/etc/caddy/conf.d/chat-cdt.caddy"
+  if [ -f /etc/caddy/Caddyfile ] && ! grep -q "import /etc/caddy/conf.d/\*.caddy" /etc/caddy/Caddyfile 2>/dev/null; then
+    echo "import /etc/caddy/conf.d/*.caddy" | sudo tee -a /etc/caddy/Caddyfile >/dev/null
   fi
+  sudo mkdir -p /etc/caddy/conf.d
+  sudo cp "$APP_DIR/infra/Caddyfile" "$CADDY_SNIPPET"
+  sudo caddy validate --config /etc/caddy/Caddyfile || die "Caddyfile inválido"
+  sudo systemctl reload caddy
+  log "caddy recarregado"
 fi
-sudo mkdir -p /etc/caddy/conf.d
-sudo cp "$APP_DIR/infra/Caddyfile" "$CADDY_SNIPPET"
-sudo caddy validate --config /etc/caddy/Caddyfile || die "Caddyfile inválido"
-sudo systemctl reload caddy
-log "caddy recarregado"
 
 # ---------- 11. Health check ----------
 log "esperando o Next ficar pronto..."

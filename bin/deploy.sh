@@ -57,13 +57,13 @@ CHANGED="$(git diff --name-only "$PREV_SHA" "$NEW_SHA")"
 echo "$CHANGED" | sed 's/^/  /'
 
 deps_changed=0
-caddy_changed=0
+proxy_changed=0
 pm2_changed=0
 migrations_changed=0
-echo "$CHANGED" | grep -E '^(package\.json|pnpm-lock\.yaml)$'        >/dev/null && deps_changed=1
-echo "$CHANGED" | grep -E '^infra/Caddyfile$'                         >/dev/null && caddy_changed=1
-echo "$CHANGED" | grep -E '^infra/ecosystem\.config\.cjs$'            >/dev/null && pm2_changed=1
-echo "$CHANGED" | grep -E '^infra/supabase/migrations/'               >/dev/null && migrations_changed=1
+echo "$CHANGED" | grep -E '^(package\.json|pnpm-lock\.yaml)$'                 >/dev/null && deps_changed=1
+echo "$CHANGED" | grep -E '^infra/(Caddyfile|nginx-chat-cdt\.conf)$'          >/dev/null && proxy_changed=1
+echo "$CHANGED" | grep -E '^infra/ecosystem\.config\.cjs$'                    >/dev/null && pm2_changed=1
+echo "$CHANGED" | grep -E '^infra/supabase/migrations/'                       >/dev/null && migrations_changed=1
 
 # ---------- 4. Aviso de migrações pendentes ----------
 if [ "$migrations_changed" -eq 1 ]; then
@@ -94,12 +94,19 @@ else
 fi
 pm2 save
 
-# ---------- 8. Caddy ----------
-if [ "$caddy_changed" -eq 1 ]; then
-  log "Caddyfile mudou, reload"
-  sudo cp "$APP_DIR/infra/Caddyfile" /etc/caddy/conf.d/chat-cdt.caddy
-  sudo caddy validate --config /etc/caddy/Caddyfile
-  sudo systemctl reload caddy
+# ---------- 8. Proxy (nginx ou Caddy) ----------
+if [ "$proxy_changed" -eq 1 ]; then
+  if systemctl is-active --quiet nginx 2>/dev/null; then
+    log "config nginx mudou, reload"
+    sudo cp "$APP_DIR/infra/nginx-chat-cdt.conf" /etc/nginx/sites-available/chat-cdt
+    sudo nginx -t
+    sudo systemctl reload nginx
+  elif systemctl is-active --quiet caddy 2>/dev/null; then
+    log "Caddyfile mudou, reload"
+    sudo cp "$APP_DIR/infra/Caddyfile" /etc/caddy/conf.d/chat-cdt.caddy
+    sudo caddy validate --config /etc/caddy/Caddyfile
+    sudo systemctl reload caddy
+  fi
 fi
 
 # ---------- 9. Health check + rollback ----------
