@@ -53,13 +53,18 @@ export async function POST(req: NextRequest) {
 
   const supabase = createServiceClient()
 
-  // Audit log (best-effort, não bloqueia ACK).
-  supabase
-    .from('chat_webhook_events')
-    .insert({ payload: body })
-    .then(({ error }) => {
-      if (error) console.error('[webhook] audit insert failed', error)
-    })
+  // Audit log: só persiste inbound de cliente (campo messages[] no payload).
+  // Statuses (sent/delivered/read/failed) são 91% do volume e só atualizam
+  // messages.status — não há nada útil pra replay. Sem esse filtro, a tabela
+  // crescia ~3 GB/mês.
+  if (hasInboundMessages(body)) {
+    supabase
+      .from('chat_webhook_events')
+      .insert({ payload: body })
+      .then(({ error }) => {
+        if (error) console.error('[webhook] audit insert failed', error)
+      })
+  }
 
   // ACK rápido. Meta retenta se > 5s.
   queueMicrotask(() =>
@@ -69,6 +74,19 @@ export async function POST(req: NextRequest) {
   )
 
   return NextResponse.json({ ok: true })
+}
+
+// --- helpers -------------------------------------------------------------
+
+function hasInboundMessages(body: WebhookEnvelope): boolean {
+  for (const entry of body.entry ?? []) {
+    for (const change of entry.changes ?? []) {
+      if (change.field !== 'messages') continue
+      const msgs = (change.value as { messages?: unknown[] } | undefined)?.messages
+      if (Array.isArray(msgs) && msgs.length > 0) return true
+    }
+  }
+  return false
 }
 
 // --- processing ----------------------------------------------------------

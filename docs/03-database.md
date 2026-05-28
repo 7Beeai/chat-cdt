@@ -146,12 +146,16 @@ chat_sender_kind         ('ai','operator','system','customer')
 Após `INSERT` de mensagem com `direction='in'`, atualiza `conversations.last_inbound_at` + `customer_window_expires_at = now() + 24h`.
 
 ### `trg_chat_notify_handoff` em `conversations`
-Após `UPDATE OF routing`, se `new.routing='queued'` e `old.routing != 'queued'`, chama `net.http_post(app.app_origin || '/api/internal/push/notify', ...)` para fanout de push. **Lê 2 GUCs**: `app.app_origin` e `app.cron_secret`. Sem eles, no-op (não dispara push).
+Após `UPDATE OF routing`, se `new.routing='queued'` e `old.routing != 'queued'`, chama `net.http_post(<app_origin> || '/api/internal/push/notify', ...)` para fanout de push. **Lê 2 valores da tabela `public.chat_config`**: chaves `app_origin` e `cron_secret`. Sem eles, no-op.
 
-Para ativar push em prod:
+> **Histórico**: o plano original usava GUCs `app.app_origin`/`app.cron_secret` via `alter database ... set`. Supabase Cloud bloqueia esse comando até para o role `postgres`. Migration `0003_config_table.sql` substituiu o mecanismo pela tabela `chat_config` (RLS deny-all, só `service_role` lê/escreve).
+
+Para popular/atualizar em produção:
 ```sql
-alter database postgres set app.app_origin  = 'https://chat.cdt.exemplo.com.br';
-alter database postgres set app.cron_secret = '<CRON_SECRET>';
+insert into public.chat_config (key, value) values
+  ('app_origin',  'https://chat.cdt.7bee.ai'),
+  ('cron_secret', '<MESMO VALOR DO .env.local CRON_SECRET>')
+on conflict (key) do update set value = excluded.value, updated_at = now();
 ```
 
 ## RLS
