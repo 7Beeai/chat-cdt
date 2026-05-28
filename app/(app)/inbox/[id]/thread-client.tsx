@@ -1,10 +1,23 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Check, CheckCheck, Clock, TriangleAlert } from 'lucide-react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
+import {
+  Check,
+  CheckCheck,
+  Clock,
+  TriangleAlert,
+  Sparkles,
+} from 'lucide-react'
 
 import { createClient } from '@/lib/supabase/client'
 import { createMediaSignedUrl, extractMediaInfo } from '@/lib/storage/media'
+import { dateDividerLabel, dateKey } from '@/lib/format/time'
 import { cn } from '@/lib/utils'
 
 import { ComposerBar } from './composer-bar'
@@ -14,11 +27,80 @@ import { ThreadHeader } from './thread-header'
 
 type MediaState = { url: string | null; pending: boolean }
 
+const MEDIA_TYPES = new Set(['image', 'audio', 'video', 'document', 'sticker'])
+const GROUP_WINDOW_MS = 5 * 60 * 1000
+
+type SenderTone = 'in' | 'out-ai' | 'out-operator' | 'out-system'
+
+type MessageGroup = {
+  kind: 'messages'
+  key: string
+  tone: SenderTone
+  messages: Message[]
+}
+
+type DateMark = {
+  kind: 'date'
+  key: string
+  label: string
+}
+
+type ThreadItem = MessageGroup | DateMark
+
+function toneOf(msg: Message): SenderTone {
+  if (msg.direction === 'in') return 'in'
+  if (msg.sent_by === 'operator') return 'out-operator'
+  if (msg.sent_by === 'ai') return 'out-ai'
+  return 'out-system'
+}
+
+function buildThreadItems(messages: Message[]): ThreadItem[] {
+  const out: ThreadItem[] = []
+  let lastDateKey = ''
+  let currentGroup: MessageGroup | null = null
+
+  for (const m of messages) {
+    const dKey = dateKey(m.created_at)
+    if (dKey !== lastDateKey) {
+      out.push({
+        kind: 'date',
+        key: `date:${dKey}`,
+        label: dateDividerLabel(m.created_at),
+      })
+      lastDateKey = dKey
+      currentGroup = null
+    }
+
+    const tone = toneOf(m)
+    const tMs = new Date(m.created_at).getTime()
+    const last =
+      currentGroup && currentGroup.messages[currentGroup.messages.length - 1]
+    const withinWindow =
+      last &&
+      tMs - new Date(last.created_at).getTime() <= GROUP_WINDOW_MS
+    const sameTone = currentGroup && currentGroup.tone === tone
+
+    if (currentGroup && sameTone && withinWindow) {
+      currentGroup.messages.push(m)
+    } else {
+      currentGroup = {
+        kind: 'messages',
+        key: `g:${m.id}`,
+        tone,
+        messages: [m],
+      }
+      out.push(currentGroup)
+    }
+  }
+  return out
+}
+
+// ---------------------------------------------------------------------------
+
 type Props = {
   initial: Message[]
   conversation: ConversationView
   userId: string
-  /** URLs assinadas + estado pending pré-gerados em SSR. */
   initialMediaUrls: Record<string, MediaState>
 }
 
@@ -34,21 +116,17 @@ export function ThreadClient({
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const endRef = useRef<HTMLDivElement | null>(null)
 
-  // Scroll-to-bottom after layout. requestAnimationFrame gives the DOM
-  // time to mount the new bubble before we measure scrollHeight.
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
     requestAnimationFrame(() => {
       endRef.current?.scrollIntoView({ behavior, block: 'end' })
     })
   }, [])
 
-  // Initial mount: jump to the bottom without animation.
   useEffect(() => {
     scrollToBottom('auto')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Realtime subscription scoped to this conversation.
   useEffect(() => {
     const supabase = createClient()
     const channel = supabase
@@ -64,9 +142,6 @@ export function ThreadClient({
         (payload) => {
           const row = payload.new as Message
           setMessages((prev) => {
-            // Optimistic dedup: if we already have a row with the same
-            // wa_message_id (assigned after the API responded) or the same
-            // id, replace it in place rather than duplicating.
             const byWaId = row.wa_message_id
               ? prev.findIndex((m) => m.wa_message_id === row.wa_message_id)
               : -1
@@ -79,7 +154,6 @@ export function ThreadClient({
             }
             return [...prev, row]
           })
-          // Se tem mídia já com storage_path no INSERT, resolve URL.
           void resolveMediaUrlIfNeeded(row)
           scrollToBottom()
         },
@@ -101,7 +175,6 @@ export function ThreadClient({
             next[idx] = { ...prev[idx], ...row }
             return next
           })
-          // Mídia que veio depois (webhook terminou de baixar).
           void resolveMediaUrlIfNeeded(row)
         },
       )
@@ -119,15 +192,12 @@ export function ThreadClient({
         | undefined
       const path = sub?.storage_path
       if (!path) {
-        // Ainda baixando: mensagem é recente (chegou via Realtime há instantes),
-        // então marca pending para spinner. Webhook deve completar em 1-3s.
         setMediaUrls((prev) => ({
           ...prev,
           [row.id]: prev[row.id] ?? { url: null, pending: true },
         }))
         return
       }
-      // Já tem URL? evita refetch.
       if (mediaUrls[row.id]?.url) return
       const url = await createMediaSignedUrl(supabase, path, 3600)
       setMediaUrls((prev) => ({
@@ -138,23 +208,14 @@ export function ThreadClient({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversation.id, scrollToBottom])
 
-  /**
-   * Optimistic insertion — called by the composer immediately on submit,
-   * before the API round-trip. The temp row gets a client-only id; the
-   * composer later patches it with the real wa_message_id once the API
-   * responds.
-   */
-  const appendOptimistic = useCallback((msg: Message) => {
-    setMessages((prev) => [...prev, msg])
-    scrollToBottom()
-  }, [scrollToBottom])
+  const appendOptimistic = useCallback(
+    (msg: Message) => {
+      setMessages((prev) => [...prev, msg])
+      scrollToBottom()
+    },
+    [scrollToBottom],
+  )
 
-  /**
-   * Patch a previously-optimistic row by its client temp id with the data
-   * we now know (wa_message_id, server-side timestamps, status). The
-   * realtime channel may have already replaced it — if so, the lookup
-   * misses and we leave state alone.
-   */
   const patchOptimistic = useCallback(
     (tempId: string, patch: Partial<Message>) => {
       setMessages((prev) => {
@@ -179,6 +240,7 @@ export function ThreadClient({
   }, [conversation.customer_window_expires_at])
 
   const wabaTextId = conversation.phone?.waba?.waba_id ?? null
+  const items = useMemo(() => buildThreadItems(messages), [messages])
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
@@ -186,21 +248,35 @@ export function ThreadClient({
 
       <div
         ref={viewportRef}
-        className="min-h-0 flex-1 overflow-y-auto bg-background"
+        className="relative min-h-0 flex-1 overflow-y-auto"
       >
-        <div className="mx-auto flex max-w-3xl flex-col gap-3 px-6 py-6">
-          {messages.length === 0 ? (
-            <div className="py-12 text-center font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
-              Sem mensagens ainda.
-            </div>
+        {/* Subtle paper-like texture so o background não fica preto morto.
+            Pointer-events-none deixa scroll/click passar. */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 opacity-[0.025]"
+          style={{
+            backgroundImage:
+              'radial-gradient(circle at 1px 1px, hsl(var(--foreground)) 1px, transparent 0)',
+            backgroundSize: '24px 24px',
+          }}
+        />
+
+        <div className="relative mx-auto flex max-w-3xl flex-col px-4 py-6 sm:px-6 sm:py-8">
+          {items.length === 0 ? (
+            <EmptyState />
           ) : (
-            messages.map((m) => (
-              <MessageBubble
-                key={m.id}
-                msg={m}
-                media={mediaUrls[m.id] ?? { url: null, pending: false }}
-              />
-            ))
+            items.map((item) =>
+              item.kind === 'date' ? (
+                <DateDivider key={item.key} label={item.label} />
+              ) : (
+                <MessageGroupView
+                  key={item.key}
+                  group={item}
+                  mediaUrls={mediaUrls}
+                />
+              ),
+            )
           )}
           <div ref={endRef} />
         </div>
@@ -220,54 +296,143 @@ export function ThreadClient({
   )
 }
 
-const MEDIA_TYPES = new Set(['image', 'audio', 'video', 'document', 'sticker'])
+// ---------------------------------------------------------------------------
 
-function MessageBubble({
-  msg,
-  media,
-}: {
-  msg: Message
-  media: MediaState
-}) {
-  const isIn = msg.direction === 'in'
-  const sentByOperator = msg.sent_by === 'operator'
-  const sentByAI = msg.sent_by === 'ai'
-  const isMedia = MEDIA_TYPES.has(msg.type)
-
-  // Bubble base + variantes (in / out-AI / out-operator).
-  // Mídia tem padding menor pra thumbnail/player parecer "encaixado".
-  const bubbleClass = cn(
-    'max-w-[70%] rounded-2xl shadow-sm whitespace-pre-wrap break-words text-sm leading-relaxed',
-    isMedia ? 'p-1.5' : 'px-3.5 py-2',
-    isIn && 'bg-secondary text-foreground rounded-bl-sm',
-    !isIn &&
-      sentByAI &&
-      'bg-secondary text-foreground border border-border rounded-br-sm',
-    !isIn &&
-      sentByOperator &&
-      'bg-accent text-accent-foreground rounded-br-sm',
-    !isIn &&
-      !sentByAI &&
-      !sentByOperator &&
-      'bg-secondary text-foreground rounded-br-sm',
+function EmptyState() {
+  return (
+    <div className="flex flex-1 items-center justify-center py-24 text-center">
+      <div className="flex max-w-xs flex-col items-center gap-3">
+        <div className="flex size-12 items-center justify-center rounded-full bg-secondary/50">
+          <Clock className="size-5 text-muted-foreground" />
+        </div>
+        <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.25em] text-muted-foreground">
+          Conversa vazia
+        </p>
+        <p className="text-sm text-muted-foreground">
+          Nada por aqui ainda. As mensagens aparecem em tempo real.
+        </p>
+      </div>
+    </div>
   )
+}
 
-  const rowClass = cn('flex w-full', isIn ? 'justify-start' : 'justify-end')
+function DateDivider({ label }: { label: string }) {
+  return (
+    <div className="my-6 flex items-center justify-center first:mt-0">
+      <span className="rounded-full border border-border/60 bg-card/80 px-3 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground backdrop-blur-sm">
+        {label}
+      </span>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+
+function MessageGroupView({
+  group,
+  mediaUrls,
+}: {
+  group: MessageGroup
+  mediaUrls: Record<string, MediaState>
+}) {
+  const align = group.tone === 'in' ? 'items-start' : 'items-end'
+  const groupGap = 'gap-[3px]' // intra-grupo: bubbles colados
 
   return (
-    <div className={rowClass}>
-      <div
-        className={cn(
-          'flex max-w-[70%] flex-col gap-1',
-          isIn ? 'items-start' : 'items-end',
-        )}
-      >
-        {!isIn && sentByAI && (
-          <span className="inline-block rounded-full border border-accent/30 bg-accent/15 px-1.5 py-0 font-mono text-[9px] uppercase tracking-wider text-accent">
-            IA
-          </span>
-        )}
+    <div className={cn('mt-4 flex flex-col first:mt-0', align, groupGap)}>
+      {/* Chip "IA" só uma vez no início de grupo de IA */}
+      {group.tone === 'out-ai' && <AIBadge />}
 
+      {group.messages.map((m, i) => {
+        const position: BubblePosition =
+          group.messages.length === 1
+            ? 'only'
+            : i === 0
+              ? 'first'
+              : i === group.messages.length - 1
+                ? 'last'
+                : 'middle'
+        const isLastOfGroup = i === group.messages.length - 1
+
+        return (
+          <Bubble
+            key={m.id}
+            msg={m}
+            tone={group.tone}
+            position={position}
+            media={mediaUrls[m.id] ?? { url: null, pending: false }}
+            showTimeAndStatus={isLastOfGroup}
+          />
+        )
+      })}
+    </div>
+  )
+}
+
+function AIBadge() {
+  return (
+    <span className="mb-0.5 inline-flex items-center gap-1 rounded-full border border-accent/30 bg-accent/10 px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wider text-accent">
+      <Sparkles className="size-2.5" />
+      IA
+    </span>
+  )
+}
+
+// ---------------------------------------------------------------------------
+
+type BubblePosition = 'only' | 'first' | 'middle' | 'last'
+
+function Bubble({
+  msg,
+  tone,
+  position,
+  media,
+  showTimeAndStatus,
+}: {
+  msg: Message
+  tone: SenderTone
+  position: BubblePosition
+  media: MediaState
+  showTimeAndStatus: boolean
+}) {
+  const isIn = tone === 'in'
+  const isMedia = MEDIA_TYPES.has(msg.type)
+
+  // Cantos: pequenos quando "atachado" a um bubble vizinho do mesmo grupo,
+  // ou no canto da cauda (only/last). Os demais permanecem rounded-2xl.
+  const topAttached = position === 'middle' || position === 'last'
+  const bottomAttached = position === 'first' || position === 'middle'
+  const showTail = position === 'only' || position === 'last'
+  const cornerClass = isIn
+    ? cn(
+        topAttached && 'rounded-tl-md',
+        (bottomAttached || showTail) && 'rounded-bl-md',
+      )
+    : cn(
+        topAttached && 'rounded-tr-md',
+        (bottomAttached || showTail) && 'rounded-br-md',
+      )
+
+  // Cores por tone
+  const bgClass = (() => {
+    if (isIn) return 'bg-card text-foreground border border-border/60'
+    if (tone === 'out-operator')
+      return 'bg-accent text-accent-foreground shadow-sm shadow-accent/10'
+    // out-ai e out-system
+    return 'bg-card text-foreground border border-border/60'
+  })()
+
+  const bubbleClass = cn(
+    'group relative inline-block max-w-full break-words rounded-2xl',
+    'leading-relaxed text-[15px]',
+    isMedia ? 'p-1.5' : 'px-3.5 py-2',
+    cornerClass,
+    bgClass,
+  )
+
+  return (
+    <div className="w-full max-w-[88%] sm:max-w-[78%] md:max-w-[72%]">
+      <div className={cn('flex w-full', isIn ? 'justify-start' : 'justify-end')}>
         <div className={bubbleClass}>
           {isMedia ? (
             <MediaBubble
@@ -279,10 +444,31 @@ function MessageBubble({
               mimeType={extractMimeType(msg)}
             />
           ) : (
-            renderTextBody(msg)
+            <p className="whitespace-pre-wrap">{renderTextBody(msg)}</p>
+          )}
+
+          {/* Timestamp + status: SÓ no último bubble do grupo, dentro do
+              próprio bubble (canto inferior). Para mídia, fica abaixo. */}
+          {showTimeAndStatus && !isMedia && (
+            <span
+              className={cn(
+                'ml-2 inline-flex translate-y-0.5 items-center gap-1 align-baseline font-mono-num text-[10px]',
+                tone === 'out-operator'
+                  ? 'text-accent-foreground/70'
+                  : 'text-muted-foreground/80',
+              )}
+            >
+              {formatTime(msg.created_at)}
+              {!isIn && (
+                <StatusIcon status={msg.status} tone={tone} />
+              )}
+            </span>
           )}
         </div>
+      </div>
 
+      {/* Para mídia: timestamp/status fora do bubble (não cabe inline) */}
+      {showTimeAndStatus && isMedia && (
         <div
           className={cn(
             'mt-1 flex items-center gap-1 font-mono-num text-[10px] text-muted-foreground/80',
@@ -290,12 +476,52 @@ function MessageBubble({
           )}
         >
           <span>{formatTime(msg.created_at)}</span>
-          {!isIn && <StatusIcon status={msg.status} />}
+          {!isIn && <StatusIcon status={msg.status} tone={tone} />}
         </div>
-      </div>
+      )}
     </div>
   )
 }
+
+function StatusIcon({
+  status,
+  tone,
+}: {
+  status: Message['status']
+  tone: SenderTone
+}) {
+  const onAccent = tone === 'out-operator'
+  const muted = onAccent ? 'text-accent-foreground/60' : 'text-muted-foreground/80'
+
+  if (status === 'pending')
+    return <Clock className={cn('size-3', muted)} aria-label="pendente" />
+  if (status === 'sent')
+    return <Check className={cn('size-3', muted)} aria-label="enviada" />
+  if (status === 'delivered')
+    return (
+      <CheckCheck className={cn('size-3', muted)} aria-label="entregue" />
+    )
+  if (status === 'read')
+    return (
+      <CheckCheck
+        className={cn(
+          'size-3',
+          onAccent ? 'text-accent-foreground' : 'text-sky-400',
+        )}
+        aria-label="lida"
+      />
+    )
+  if (status === 'failed')
+    return (
+      <TriangleAlert
+        className="size-3 text-destructive"
+        aria-label="falhou"
+      />
+    )
+  return null
+}
+
+// ---------------------------------------------------------------------------
 
 function renderTextBody(msg: Message): string {
   const payload = msg.payload as Record<string, unknown> | null
@@ -350,17 +576,6 @@ function extractMimeType(msg: Message): string | null {
     | { mime_type?: string }
     | undefined
   return sub?.mime_type ?? null
-}
-
-function StatusIcon({ status }: { status: Message['status'] }) {
-  if (status === 'pending') return <Clock className="size-3" />
-  if (status === 'sent') return <Check className="size-3" />
-  if (status === 'delivered') return <CheckCheck className="size-3" />
-  if (status === 'read')
-    return <CheckCheck className="size-3 text-sky-400" />
-  if (status === 'failed')
-    return <TriangleAlert className="size-3 text-destructive" />
-  return null
 }
 
 function formatTime(iso: string): string {

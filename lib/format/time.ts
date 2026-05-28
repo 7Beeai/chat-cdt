@@ -61,6 +61,40 @@ export function windowRemaining(expiresAt: string | null): {
 }
 
 /**
+ * Date label para divisores no thread: "Hoje", "Ontem", "12 de mai", ou
+ * "12 de mai de 2024" (quando ano difere do atual). Usa pt-BR.
+ */
+const PT_MONTHS_SHORT = [
+  'jan', 'fev', 'mar', 'abr', 'mai', 'jun',
+  'jul', 'ago', 'set', 'out', 'nov', 'dez',
+]
+export function dateDividerLabel(ts: string): string {
+  const d = new Date(ts)
+  if (Number.isNaN(d.getTime())) return ''
+  const now = new Date()
+  const startOf = (x: Date) =>
+    new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()
+  const diffDays = Math.round((startOf(now) - startOf(d)) / 86_400_000)
+  if (diffDays === 0) return 'Hoje'
+  if (diffDays === 1) return 'Ontem'
+  const dayMonth = `${d.getDate()} de ${PT_MONTHS_SHORT[d.getMonth()]}`
+  if (d.getFullYear() === now.getFullYear()) return dayMonth
+  return `${dayMonth} de ${d.getFullYear()}`
+}
+
+/**
+ * Identifica o dia-calendário em YYYY-MM-DD (key para agrupamento por data).
+ */
+export function dateKey(ts: string): string {
+  const d = new Date(ts)
+  if (Number.isNaN(d.getTime())) return ''
+  return (
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-` +
+    `${String(d.getDate()).padStart(2, '0')}`
+  )
+}
+
+/**
  * Formats an E.164-ish wa_id (digits-only, no '+') as +55 31 9 9999-9999 (best-effort, BR-first).
  * Falls back to "+<digits>" if shape is unknown.
  */

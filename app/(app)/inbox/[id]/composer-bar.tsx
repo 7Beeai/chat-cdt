@@ -13,8 +13,9 @@ import {
   AlertOctagon,
   Clock,
   LayoutTemplate,
+  Loader2,
   Paperclip,
-  Send,
+  SendHorizontal,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -28,13 +29,7 @@ import { TemplatePicker } from './template-picker'
 type Props = {
   conversationId: string
   insideWindow: boolean
-  /** ISO timestamp of when the 24h customer window closes. */
   expiresAt: string | null
-  /**
-   * Meta WABA id (TEXT, not internal uuid). Used by the template picker
-   * to query `template_inventory.waba_id`. May be null if the
-   * conversation isn't fully wired — in that case we disable templates.
-   */
   wabaId: string | null
   userId: string
   onOptimisticAppend: (msg: Message) => void
@@ -60,9 +55,16 @@ export function ComposerBar({
   const [pickerOpen, setPickerOpen] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
 
-  // Re-render the soft window warning every 60s while inside the window.
-  // The hard "out of window" state is provided by the parent — we only
-  // need the local tick for the amber "<2h" warning.
+  // Auto-grow do textarea conforme o usuário digita.
+  useEffect(() => {
+    const el = textareaRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    const max = 200 // ~8 linhas
+    el.style.height = `${Math.min(el.scrollHeight, max)}px`
+  }, [text])
+
+  // Tick pra re-renderizar warning amber a cada minuto enquanto dentro da janela
   const [tick, setTick] = useState(0)
   useEffect(() => {
     if (!insideWindow) return
@@ -70,15 +72,17 @@ export function ComposerBar({
     return () => clearInterval(t)
   }, [insideWindow])
 
-  // `tick` is in deps so the memo recomputes against the wall clock even
-  // though we don't read it directly.
   const remainingMs = useMemo(() => {
     if (!expiresAt) return 0
     return new Date(expiresAt).getTime() - Date.now()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expiresAt, tick])
 
   const showAmberWarning =
     insideWindow && remainingMs > 0 && remainingMs < TWO_HOURS_MS
+
+  const charsLeft = MAX_CHARS - text.length
+  const showCounter = charsLeft < 300 // só perto do limite
 
   const onSubmit = useCallback(
     async (e?: FormEvent) => {
@@ -126,18 +130,11 @@ export function ComposerBar({
             wa_message_id: data.wa_message_id ?? null,
             status: 'sent',
           })
-          if (data.warning) {
-            toast.warning(`Enviada, mas: ${data.warning}`)
-          }
+          if (data.warning) toast.warning(`Enviada, mas: ${data.warning}`)
         } else if (r.status === 409) {
-          // Out of 24h window — require a template instead. Drop the
-          // optimistic bubble and prompt the operator.
           onOptimisticDrop(tempId)
-          // Restore the text so the operator doesn't lose it.
           setText(trimmed)
-          toast.error(
-            'Fora da janela de 24h. Envie um template para retomar.',
-          )
+          toast.error('Fora da janela de 24h. Envie um template para retomar.')
           setPickerOpen(true)
         } else if (r.status === 502) {
           let detail = ''
@@ -167,7 +164,6 @@ export function ComposerBar({
         setText(trimmed)
       } finally {
         setSending(false)
-        // Refocus after a microtask so the controlled clear lands first.
         requestAnimationFrame(() => textareaRef.current?.focus())
       }
     },
@@ -184,8 +180,9 @@ export function ComposerBar({
 
   const onKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
-      // Cmd/Ctrl+Enter submits. Plain Enter inserts a newline.
-      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      // Enter envia, Shift+Enter nova linha (padrão moderno tipo Linear/Slack).
+      // Ctrl+Enter também envia (compat com hábito antigo).
+      if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault()
         void onSubmit()
       }
@@ -193,34 +190,68 @@ export function ComposerBar({
     [onSubmit],
   )
 
-  const disabled = sending || text.trim().length === 0
+  const canSend = !sending && text.trim().length > 0 && insideWindow
   const canTemplate = wabaId !== null
 
   return (
-    <div className="elegant-divider border-t border-border bg-card px-6 py-4">
-      <form
-        onSubmit={onSubmit}
-        className="mx-auto flex max-w-3xl flex-col"
-      >
+    <div className="elegant-divider relative shrink-0 border-t border-border bg-card/95 px-4 py-3 backdrop-blur-sm sm:px-6 sm:py-4">
+      <form onSubmit={onSubmit} className="mx-auto flex max-w-3xl flex-col">
         {!insideWindow && (
-          <div className="mb-3 flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          <div className="mb-3 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
             <AlertOctagon className="size-4 shrink-0" />
             <span>
-              Fora da janela de 24h. Use um template aprovado para retomar a
-              conversa.
+              Fora da janela de 24h. Use um <strong>template aprovado</strong>{' '}
+              para retomar a conversa.
             </span>
           </div>
         )}
         {showAmberWarning && (
-          <div className="mb-3 flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-400">
+          <div className="mb-3 flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-400">
             <Clock className="size-4 shrink-0" />
             <span>
-              Janela 24h expira em {formatShortRemaining(remainingMs)}.
+              Janela de 24h expira em{' '}
+              <strong>{formatShortRemaining(remainingMs)}</strong>.
             </span>
           </div>
         )}
 
-        <div className="relative rounded-xl border border-border bg-secondary/40 transition-colors focus-within:border-accent/60">
+        <div
+          className={cn(
+            'group relative flex items-end gap-2 rounded-2xl border border-border bg-secondary/40 px-2 py-1.5 transition-colors',
+            'focus-within:border-accent/60 focus-within:bg-secondary/60',
+          )}
+        >
+          {/* Attach button — disabled (Fase 2) */}
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            disabled
+            className="mb-1 shrink-0 text-muted-foreground/60"
+            title="Anexos em breve"
+            aria-label="Anexar (em breve)"
+          >
+            <Paperclip />
+          </Button>
+
+          {/* Templates button — sempre acessível dentro da bar */}
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            disabled={!canTemplate}
+            onClick={() => setPickerOpen(true)}
+            className="mb-1 shrink-0 text-muted-foreground/80 hover:text-foreground"
+            title={
+              canTemplate
+                ? 'Templates aprovados'
+                : 'WABA não configurada para esta conversa'
+            }
+            aria-label="Templates"
+          >
+            <LayoutTemplate />
+          </Button>
+
           <Textarea
             ref={textareaRef}
             value={text}
@@ -228,59 +259,59 @@ export function ComposerBar({
             onKeyDown={onKeyDown}
             placeholder={
               insideWindow
-                ? 'Mensagem para o cliente. Ctrl+Enter para enviar.'
-                : 'Janela 24h expirou — envie um template.'
+                ? 'Mensagem para o cliente. Enter envia · Shift+Enter quebra linha.'
+                : 'Janela 24h expirou — clique no ícone de templates.'
             }
             rows={1}
             disabled={sending}
             className={cn(
-              'block min-h-0 max-h-40 w-full resize-none border-0 bg-transparent px-4 py-3 pr-12 text-sm leading-relaxed text-foreground shadow-none outline-none placeholder:text-muted-foreground/70 focus-visible:ring-0 dark:bg-transparent',
+              'block min-h-9 w-full resize-none border-0 bg-transparent px-2 py-2 text-[15px] leading-relaxed text-foreground placeholder:text-muted-foreground/60 focus-visible:ring-0 dark:bg-transparent',
             )}
+            aria-label="Texto da mensagem"
           />
+
+          {/* Send button - sempre visível, só muda estado */}
           <Button
             type="submit"
             size="icon-sm"
-            disabled={disabled || !insideWindow}
+            disabled={!canSend}
+            className={cn(
+              'mb-1 shrink-0 transition-transform',
+              canSend && 'active:scale-90',
+            )}
             title={
-              !insideWindow ? 'Fora da janela 24h' : 'Enviar (Ctrl+Enter)'
+              !insideWindow
+                ? 'Fora da janela 24h'
+                : sending
+                  ? 'Enviando…'
+                  : 'Enviar (Enter)'
             }
-            className="absolute right-2 bottom-2"
             aria-label="Enviar mensagem"
           >
-            <Send />
+            {sending ? (
+              <Loader2 className="animate-spin" />
+            ) : (
+              <SendHorizontal />
+            )}
           </Button>
         </div>
 
-        <div className="mt-2 flex items-center gap-2">
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={!canTemplate}
-            onClick={() => setPickerOpen(true)}
-            title={
-              canTemplate
-                ? 'Enviar template aprovado'
-                : 'WABA não configurada para esta conversa'
-            }
-          >
-            <LayoutTemplate />
-            Templates
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            disabled
-            title="Anexos em breve"
-          >
-            <Paperclip />
-            Anexar
-          </Button>
-          <span className="ml-auto font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-            Ctrl+Enter para enviar · {text.length}/{MAX_CHARS}
-          </span>
-        </div>
+        {/* Footer: char counter (só perto do limite) + hint */}
+        {(showCounter || !insideWindow) && (
+          <div className="mt-1.5 flex items-center justify-end gap-3 px-2 text-[10px] text-muted-foreground">
+            {showCounter && (
+              <span
+                className={cn(
+                  'font-mono-num',
+                  charsLeft < 50 && 'text-amber-400',
+                  charsLeft < 0 && 'text-destructive',
+                )}
+              >
+                {charsLeft} restantes
+              </span>
+            )}
+          </div>
+        )}
       </form>
 
       {canTemplate && (
@@ -297,8 +328,8 @@ export function ComposerBar({
 
 function formatShortRemaining(ms: number): string {
   const min = Math.max(0, Math.floor(ms / 60_000))
-  if (min < 60) return `${min}m`
+  if (min < 60) return `${min} min`
   const h = Math.floor(min / 60)
   const rem = min % 60
-  return rem ? `${h}h ${rem}m` : `${h}h`
+  return rem ? `${h}h ${rem} min` : `${h}h`
 }

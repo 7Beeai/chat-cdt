@@ -1,12 +1,25 @@
 'use client'
 
 import { useEffect, useState, useTransition } from 'react'
-import { ArrowLeft, Bot, Clock, UserCheck, X } from 'lucide-react'
+import {
+  ArrowLeft,
+  Bot,
+  Clock,
+  MoreHorizontal,
+  UserCheck,
+  X,
+} from 'lucide-react'
 import Link from 'next/link'
 import { toast } from 'sonner'
 
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
+import {
+  Sheet,
+  SheetClose,
+  SheetContent,
+  SheetTrigger,
+} from '@/components/ui/sheet'
 import { cn } from '@/lib/utils'
 import { formatWaId } from '@/lib/format/phone'
 import { windowRemaining } from '@/lib/format/time'
@@ -49,9 +62,6 @@ export function ThreadHeader({ conv }: Props) {
   const [isPending, startTransition] = useTransition()
   const [, setTick] = useState(0)
 
-  // Ticking clock so the window-remaining label stays accurate. 30s
-  // granularity is plenty — the composer's "<2h amber" banner re-checks
-  // on its own interval as well.
   useEffect(() => {
     const t = setInterval(() => setTick((n) => n + 1), 30_000)
     return () => clearInterval(t)
@@ -70,15 +80,13 @@ export function ThreadHeader({ conv }: Props) {
     'Contato'
   const crmTag = conv.contact?.crm_external_id ?? null
   const initials = getInitials(contactName)
+  const waIdFormatted = formatWaId(conv.contact?.wa_id ?? '')
 
   const canAssume =
     conv.routing === 'queued' && conv.assigned_operator_id === null
   const canReturn = conv.routing === 'human'
 
-  function run(
-    label: string,
-    action: () => Promise<{ error?: string }>,
-  ) {
+  function run(label: string, action: () => Promise<{ error?: string }>) {
     startTransition(async () => {
       const r = await action()
       if (r?.error) toast.error(`${label}: ${r.error}`)
@@ -87,19 +95,25 @@ export function ThreadHeader({ conv }: Props) {
   }
 
   return (
-    <header className="elegant-divider flex items-center justify-between gap-4 border-b border-border bg-card px-6 py-4">
-      {/* Left: back + avatar + name/phone */}
-      <div className="flex min-w-0 flex-1 items-center gap-3">
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          render={<Link href="/inbox" />}
-          aria-label="Voltar para a inbox"
-        >
-          <ArrowLeft />
-        </Button>
+    <header
+      className={cn(
+        'elegant-divider relative z-10 flex shrink-0 items-center gap-3 border-b border-border bg-card/95 px-4 py-3 backdrop-blur-sm sm:gap-4 sm:px-6 sm:py-4',
+      )}
+    >
+      {/* Back button */}
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        render={<Link href="/inbox" />}
+        aria-label="Voltar para a inbox"
+        className="shrink-0"
+      >
+        <ArrowLeft />
+      </Button>
 
-        <Avatar className="size-9 shrink-0">
+      {/* Identity */}
+      <div className="flex min-w-0 flex-1 items-center gap-3">
+        <Avatar className="size-10 shrink-0">
           <AvatarFallback className="bg-secondary font-mono text-xs uppercase tracking-wider text-muted-foreground">
             {initials}
           </AvatarFallback>
@@ -107,101 +121,194 @@ export function ThreadHeader({ conv }: Props) {
 
         <div className="flex min-w-0 flex-col">
           <div className="flex items-center gap-2">
-            <span className="truncate text-sm font-semibold text-foreground">
+            <span className="truncate text-[15px] font-semibold text-foreground">
               {contactName}
             </span>
             {crmTag && (
-              <span className="inline-flex items-center rounded-full border border-border bg-secondary px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
+              <span className="hidden shrink-0 items-center rounded-full border border-border bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground sm:inline-flex">
                 {crmTag}
               </span>
             )}
           </div>
-          <span className="truncate font-mono-num text-xs text-muted-foreground">
-            {formatWaId(conv.contact?.wa_id ?? '')}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="truncate font-mono-num text-xs text-muted-foreground">
+              {waIdFormatted}
+            </span>
+            {/* Routing chip inline (móvel-friendly) */}
+            <span
+              className={cn(
+                'hidden shrink-0 items-center rounded-full px-1.5 py-0 font-mono text-[9px] font-medium uppercase tracking-wider sm:inline-flex',
+                ROUTING_TONE[conv.routing] ?? ROUTING_TONE.ai,
+              )}
+            >
+              {ROUTING_LABEL[conv.routing]}
+            </span>
+          </div>
         </div>
       </div>
 
-      {/* Center: handoff + routing badges */}
-      <div className="hidden items-center gap-2 md:flex">
-        {conv.handoff_reason && (
-          <span
-            className={cn(
-              'inline-flex items-center rounded-full px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wider',
-              HANDOFF_TONE[conv.handoff_reason] ??
-                'bg-secondary text-muted-foreground border border-border',
-            )}
-          >
-            {HANDOFF_LABEL[conv.handoff_reason] ?? conv.handoff_reason}
-          </span>
-        )}
+      {/* Center: handoff chip (esconde em mobile pequeno) */}
+      {conv.handoff_reason && (
         <span
           className={cn(
-            'inline-flex items-center rounded-full px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wider',
-            ROUTING_TONE[conv.routing] ?? ROUTING_TONE.ai,
+            'hidden shrink-0 items-center rounded-full px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wider md:inline-flex',
+            HANDOFF_TONE[conv.handoff_reason] ??
+              'bg-secondary text-muted-foreground border border-border',
           )}
         >
-          {ROUTING_LABEL[conv.routing]}
+          {HANDOFF_LABEL[conv.handoff_reason] ?? conv.handoff_reason}
         </span>
+      )}
+
+      {/* Window indicator */}
+      <div
+        className={cn(
+          'hidden shrink-0 items-center gap-1.5 rounded-full border px-2 py-1 font-mono-num text-[11px] sm:inline-flex',
+          win.expired
+            ? 'border-red-500/30 bg-red-500/10 text-red-400'
+            : isAmber
+              ? 'border-amber-500/30 bg-amber-500/10 text-amber-400'
+              : 'border-border bg-secondary/60 text-muted-foreground',
+        )}
+        title={
+          conv.customer_window_expires_at
+            ? `Janela 24h: ${win.label}`
+            : 'Sem janela ativa'
+        }
+      >
+        <Clock className="size-3" />
+        <span>{win.label}</span>
       </div>
 
-      {/* Right: window indicator + action buttons */}
-      <div className="flex items-center gap-3">
-        <div
-          className={cn(
-            'flex items-center gap-1.5 font-mono-num text-xs',
-            win.expired
-              ? 'text-red-400'
-              : isAmber
-                ? 'text-amber-400'
-                : 'text-muted-foreground',
-          )}
-          title={
-            conv.customer_window_expires_at
-              ? `Janela 24h expira em ${win.label}`
-              : 'Sem janela ativa'
-          }
-        >
-          <Clock className="size-3.5" />
-          <span>{win.label}</span>
-        </div>
-
-        <div className="flex items-center gap-1.5">
-          {canAssume && (
-            <Button
-              size="sm"
-              variant="default"
-              disabled={isPending}
-              onClick={() => run('Assumida', () => assignToMe(conv.id))}
-            >
-              <UserCheck />
-              Assumir
-            </Button>
-          )}
-          {canReturn && (
-            <Button
-              size="sm"
-              variant="secondary"
-              disabled={isPending}
-              onClick={() =>
-                run('Devolvida para IA', () => returnToAI(conv.id))
-              }
-            >
-              <Bot />
-              Devolver para IA
-            </Button>
-          )}
+      {/* Ações desktop */}
+      <div className="hidden shrink-0 items-center gap-1.5 lg:flex">
+        {canAssume && (
           <Button
             size="sm"
-            variant="ghost"
+            variant="default"
             disabled={isPending}
-            onClick={() => run('Encerrada', () => closeConversation(conv.id))}
+            onClick={() => run('Assumida', () => assignToMe(conv.id))}
           >
-            <X />
-            Encerrar
+            <UserCheck />
+            Assumir
           </Button>
-        </div>
+        )}
+        {canReturn && (
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={isPending}
+            onClick={() => run('Devolvida para IA', () => returnToAI(conv.id))}
+          >
+            <Bot />
+            Devolver para IA
+          </Button>
+        )}
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={isPending}
+          onClick={() => run('Encerrada', () => closeConversation(conv.id))}
+        >
+          <X />
+          Encerrar
+        </Button>
       </div>
+
+      {/* Ações mobile → sheet drawer */}
+      <Sheet>
+        <SheetTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="shrink-0 lg:hidden"
+              aria-label="Ações"
+            >
+              <MoreHorizontal />
+            </Button>
+          }
+        />
+        <SheetContent side="right" className="w-72">
+          <div className="flex flex-col gap-4 py-4">
+            <div className="border-b border-border pb-4">
+              <p className="text-sm font-semibold">{contactName}</p>
+              <p className="font-mono-num text-xs text-muted-foreground">
+                {waIdFormatted}
+              </p>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              {conv.handoff_reason && (
+                <span
+                  className={cn(
+                    'inline-flex items-center rounded-full px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wider',
+                    HANDOFF_TONE[conv.handoff_reason] ??
+                      'bg-secondary text-muted-foreground border border-border',
+                  )}
+                >
+                  {HANDOFF_LABEL[conv.handoff_reason] ?? conv.handoff_reason}
+                </span>
+              )}
+              <span
+                className={cn(
+                  'inline-flex items-center rounded-full px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wider',
+                  ROUTING_TONE[conv.routing] ?? ROUTING_TONE.ai,
+                )}
+              >
+                {ROUTING_LABEL[conv.routing]}
+              </span>
+            </div>
+
+            <div className="flex flex-col gap-2 border-t border-border pt-4">
+              {canAssume && (
+                <SheetClose
+                  render={
+                    <Button
+                      variant="default"
+                      disabled={isPending}
+                      onClick={() => run('Assumida', () => assignToMe(conv.id))}
+                    >
+                      <UserCheck />
+                      Assumir
+                    </Button>
+                  }
+                />
+              )}
+              {canReturn && (
+                <SheetClose
+                  render={
+                    <Button
+                      variant="secondary"
+                      disabled={isPending}
+                      onClick={() =>
+                        run('Devolvida para IA', () => returnToAI(conv.id))
+                      }
+                    >
+                      <Bot />
+                      Devolver para IA
+                    </Button>
+                  }
+                />
+              )}
+              <SheetClose
+                render={
+                  <Button
+                    variant="ghost"
+                    disabled={isPending}
+                    onClick={() =>
+                      run('Encerrada', () => closeConversation(conv.id))
+                    }
+                  >
+                    <X />
+                    Encerrar
+                  </Button>
+                }
+              />
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
     </header>
   )
 }
