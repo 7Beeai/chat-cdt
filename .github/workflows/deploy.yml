@@ -33,4 +33,4 @@ jobs:
           script_stop: true
           script: |
             cd /var/www/chat-cdt
-            ./bin/deploy.sh
+            bash bin/deploy.sh
