@@ -62,7 +62,8 @@ export default async function InboxPage({
       id, unit_id, status, routing, handoff_reason, priority,
       last_inbound_at, customer_window_expires_at, assigned_operator_id,
       contact:contacts(id, wa_id, name),
-      phone:chat_phone_numbers(display_phone)
+      phone:chat_phone_numbers(display_phone),
+      unit:units(id, code, name)
     `
     )
     .order('priority', { ascending: false })

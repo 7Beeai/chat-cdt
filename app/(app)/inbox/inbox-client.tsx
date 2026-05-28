@@ -1,6 +1,7 @@
 'use client'
 
 import { Inbox as InboxIcon } from 'lucide-react'
+import { usePathname } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
 
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -11,6 +12,7 @@ import type { InboxTab } from './tabs-bar'
 
 export type ConversationListItem = {
   id: string
+  unit_id: string | null
   status: 'open' | 'snoozed' | 'closed'
   routing: 'ai' | 'queued' | 'human'
   handoff_reason: 'payment_re_register' | 'cancel' | 'other_support' | null
@@ -20,6 +22,7 @@ export type ConversationListItem = {
   assigned_operator_id: string | null
   contact: { id: string; wa_id: string; name: string | null } | null
   phone: { display_phone: string | null } | null
+  unit: { id: string; code: string; name: string } | null
   preview: {
     text: string
     direction: 'in' | 'out'
@@ -29,6 +32,7 @@ export type ConversationListItem = {
 
 type ConversationRow = {
   id: string
+  unit_id: string | null
   status: 'open' | 'snoozed' | 'closed'
   routing: 'ai' | 'queued' | 'human'
   handoff_reason: 'payment_re_register' | 'cancel' | 'other_support' | null
@@ -121,6 +125,7 @@ export function InboxClient({
   tab: InboxTab
 }) {
   const [items, setItems] = useState<ConversationListItem[]>(initial)
+  const pathname = usePathname()
 
   // Reset state whenever the server-rendered initial set changes (tab switch / nav).
   useEffect(() => {
@@ -160,6 +165,7 @@ export function InboxClient({
               // navigation refreshes the server data.
               const stub: ConversationListItem = {
                 id: next.id,
+                unit_id: next.unit_id,
                 status: next.status,
                 routing: next.routing,
                 handoff_reason: next.handoff_reason,
@@ -169,6 +175,10 @@ export function InboxClient({
                 assigned_operator_id: next.assigned_operator_id,
                 contact: null,
                 phone: null,
+                // Realtime payload doesn't include joined unit metadata.
+                // The row degrades gracefully (badge uses unit_id as seed
+                // and falls back to "—" label). Next nav refreshes server data.
+                unit: null,
                 preview: null,
               }
               return sortItems([stub, ...curr])
@@ -178,6 +188,8 @@ export function InboxClient({
               return curr.filter((c) => c.id !== next.id)
             }
 
+            // unit_id never changes after creation — preserve joined `unit`
+            // from existing row so badge keeps its label/color.
             const merged: ConversationListItem = {
               ...curr[idx],
               status: next.status,
@@ -263,7 +275,10 @@ export function InboxClient({
       <ul className="flex flex-col">
         {items.map((c) => (
           <li key={c.id}>
-            <InboxRow conv={c} />
+            <InboxRow
+              conv={c}
+              isActive={pathname === `/inbox/${c.id}`}
+            />
           </li>
         ))}
       </ul>

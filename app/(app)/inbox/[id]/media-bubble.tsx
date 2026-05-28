@@ -13,6 +13,8 @@ import { useState } from 'react'
 
 import { cn } from '@/lib/utils'
 
+import { AudioPlayer } from './audio-player'
+
 type Props = {
   /** Tipo da mídia: image | audio | video | document | sticker. */
   type: string
@@ -194,13 +196,7 @@ function VideoBubble({
 }
 
 function AudioBubble({ url }: { url: string }) {
-  return (
-    <div className="flex items-center gap-2 rounded-lg bg-background/50 px-2.5 py-2">
-      <FileAudio className="size-4 shrink-0 text-muted-foreground" />
-      {/* O <audio> nativo é feio mas funcional. Suficiente p/ v1. */}
-      <audio src={url} controls preload="metadata" className="h-9 w-full" />
-    </div>
-  )
+  return <AudioPlayer url={url} />
 }
 
 function DocumentBubble({
