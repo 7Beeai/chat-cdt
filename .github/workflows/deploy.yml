@@ -1,0 +1,36 @@
+# Auto-deploy: ao dar push em main, SSH na VPS e roda bin/deploy.sh.
+#
+# Pré-requisito: criar 3 GitHub secrets no repo (Settings → Secrets and variables → Actions):
+#   VPS_HOST   — IP ou hostname da VPS
+#   VPS_USER   — usuário SSH (mesmo que dono de /var/www/chat-cdt)
+#   VPS_SSH_KEY — chave privada SSH (ed25519) com acesso ao VPS_USER
+#
+# Se preferir disparar manualmente em vez de em todo push, troque o
+# trigger 'push' por 'workflow_dispatch'.
+
+name: Deploy to VPS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-vps
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: SSH and run deploy
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script_stop: true
+          script: |
+            cd /var/www/chat-cdt
+            ./bin/deploy.sh

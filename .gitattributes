@@ -1,0 +1,11 @@
+# Força LF em scripts shell. Sem isso, Windows commita CRLF e o bash do Linux
+# falha com 'bash: /usr/bin/env: ...^M: No such file or directory'.
+*.sh        text eol=lf
+bin/*       text eol=lf
+
+# Defaults sensatos
+*           text=auto
+*.png       binary
+*.jpg       binary
+*.ico       binary
+*.svg       text eol=lf

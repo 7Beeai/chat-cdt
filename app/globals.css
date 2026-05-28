@@ -1,0 +1,404 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* ============================================================================
+ * Design tokens — 7Bee.AI / CDT (dark + lime). App é dark-only:
+ * tanto :root quanto .dark carregam os mesmos valores, garantindo que
+ * o tema vale mesmo se algum container ignorar a classe `dark` do <html>.
+ * ============================================================================ */
+:root {
+  --background: hsl(240 22% 5%);          /* #0a0a0f */
+  --foreground: hsl(240 14% 92%);         /* #e8e8ed */
+
+  --card: hsl(240 18% 9%);                /* #12121a */
+  --card-foreground: hsl(240 14% 92%);
+
+  --popover: hsl(240 18% 9%);
+  --popover-foreground: hsl(240 14% 92%);
+
+  --primary: hsl(83 79% 60%);             /* #a3e635 lime — único accent */
+  --primary-foreground: hsl(240 22% 5%);
+
+  --secondary: hsl(240 21% 13%);          /* #1a1a26 */
+  --secondary-foreground: hsl(240 14% 92%);
+
+  --muted: hsl(240 21% 13%);
+  --muted-foreground: hsl(240 9% 46%);    /* #6b6b80 */
+
+  --accent: hsl(83 79% 60%);              /* #a3e635 */
+  --accent-foreground: hsl(240 22% 5%);
+
+  --destructive: hsl(4 100% 65%);         /* #ff4757 */
+  --destructive-foreground: hsl(0 0% 100%);
+
+  --border: hsl(240 21% 15%);             /* #1e1e2e */
+  --input: hsl(240 21% 15%);
+  --ring: hsl(83 79% 60%);
+
+  --radius: 0.875rem;                     /* 14px */
+
+  /* Chart tokens (Recharts) */
+  --chart-bg: hsl(240 22% 5%);
+  --chart-foreground: hsl(240 14% 92%);
+  --chart-grid: hsl(240 21% 15%);
+  --chart-tooltip-bg: hsl(240 22% 5%);
+  --chart-tooltip-border: hsl(83 79% 60%);
+}
+
+.dark {
+  --background: hsl(240 22% 5%);
+  --foreground: hsl(240 14% 92%);
+  --card: hsl(240 18% 9%);
+  --card-foreground: hsl(240 14% 92%);
+  --popover: hsl(240 18% 9%);
+  --popover-foreground: hsl(240 14% 92%);
+  --primary: hsl(83 79% 60%);
+  --primary-foreground: hsl(240 22% 5%);
+  --secondary: hsl(240 21% 13%);
+  --secondary-foreground: hsl(240 14% 92%);
+  --muted: hsl(240 21% 13%);
+  --muted-foreground: hsl(240 9% 46%);
+  --accent: hsl(83 79% 60%);
+  --accent-foreground: hsl(240 22% 5%);
+  --destructive: hsl(4 100% 65%);
+  --destructive-foreground: hsl(0 0% 100%);
+  --border: hsl(240 21% 15%);
+  --input: hsl(240 21% 15%);
+  --ring: hsl(83 79% 60%);
+  --chart-bg: hsl(240 22% 5%);
+  --chart-foreground: hsl(240 14% 92%);
+  --chart-grid: hsl(240 21% 15%);
+  --chart-tooltip-bg: hsl(240 22% 5%);
+  --chart-tooltip-border: hsl(83 79% 60%);
+}
+
+/* ============================================================================
+ * Tailwind 4 — mapeia tokens para classes utilitárias geradas
+ * (background/foreground/primary/secondary/muted/accent/destructive/...).
+ * `inline` mantém os var() resolvidos em runtime (permite tema dinâmico).
+ * ============================================================================ */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --font-sans: var(--font-outfit), system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), "SF Mono", Menlo, monospace;
+}
+
+/* ============================================================================
+ * Base
+ * ============================================================================ */
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: var(--font-sans);
+    font-feature-settings: "ss01", "cv11";
+    position: relative;
+    overflow-x: hidden;
+  }
+
+  /* Ambient gradient — 3 glows radiais lime no fundo (não é blur, é luz) */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 90% 60% at 15% 0%,
+        hsl(83 79% 60% / 0.18) 0%, transparent 60%),
+      radial-gradient(ellipse 80% 50% at 85% 100%,
+        hsl(83 79% 60% / 0.14) 0%, transparent 55%),
+      radial-gradient(ellipse 70% 50% at 50% 50%,
+        hsl(83 79% 60% / 0.08) 0%, transparent 65%);
+    pointer-events: none;
+    z-index: 0;
+  }
+}
+
+/* ============================================================================
+ * Utility classes (assinaturas visuais do design system)
+ * ============================================================================ */
+
+/* Glow localizado no header */
+.header-glow {
+  position: relative;
+  overflow: hidden;
+}
+.header-glow::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 55% 140% at 12% 50%,
+      hsl(83 79% 60% / 0.12) 0%, transparent 65%),
+    radial-gradient(ellipse 40% 120% at 88% 50%,
+      hsl(83 79% 60% / 0.06) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Divider elegante — fade nas pontas + glow accent no centro */
+.elegant-divider {
+  position: relative;
+  border-bottom: none !important;
+}
+.elegant-divider::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent 0%,
+    hsl(240 21% 15%) 15%,
+    hsl(83 79% 60% / 0.35) 50%,
+    hsl(240 21% 15%) 85%,
+    transparent 100%
+  );
+  pointer-events: none;
+}
+
+/* Texto gradient — branco → muted */
+.gradient-text {
+  background: linear-gradient(
+    135deg,
+    hsl(240 14% 92%) 0%,
+    hsl(240 9% 46%) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+/* Números monoespaçados com kerning negativo */
+.font-mono-num {
+  font-family: var(--font-jetbrains-mono), "SF Mono", Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+/* KPI card — padrão central de cartões de métrica */
+@keyframes fade-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.kpi-card {
+  position: relative;
+  overflow: hidden;
+  background: hsl(240 18% 9%);
+  border: 1px solid hsl(240 21% 15%);
+  border-radius: 14px;
+  transition: border-color 0.3s, transform 0.2s;
+  animation: fade-slide-up 0.5s ease both;
+}
+.kpi-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(
+    to right,
+    transparent,
+    var(--kpi-accent, hsl(83 79% 60%)),
+    transparent
+  );
+  opacity: 0.6;
+  pointer-events: none;
+}
+.kpi-card:hover {
+  border-color: color-mix(
+    in srgb,
+    var(--kpi-accent, hsl(83 79% 60%)) 50%,
+    transparent
+  );
+  transform: translateY(-2px);
+}
+.kpi-card.is-negative::before {
+  background: linear-gradient(
+    to right,
+    transparent,
+    hsl(4 100% 65%),
+    transparent
+  );
+}
+.kpi-card.is-negative:hover {
+  border-color: hsl(4 100% 65% / 0.5);
+}
+
+/* Highlight — KPI principal (gradient radial + glow forte) */
+.kpi-card.is-highlight,
+.chart-card.is-highlight {
+  background: radial-gradient(
+    ellipse at top right,
+    color-mix(in srgb, var(--kpi-accent, hsl(83 79% 60%)) 16%, transparent) 0%,
+    hsl(240 18% 9%) 70%
+  );
+  border-color: color-mix(
+    in srgb,
+    var(--kpi-accent, hsl(83 79% 60%)) 35%,
+    transparent
+  );
+  box-shadow:
+    inset 0 0 31px
+      color-mix(in srgb, var(--kpi-accent, hsl(83 79% 60%)) 17%, transparent),
+    0 0 24px
+      color-mix(in srgb, var(--kpi-accent, hsl(83 79% 60%)) 26%, transparent);
+}
+.kpi-card.is-highlight::before,
+.chart-card.is-highlight::before {
+  opacity: 1;
+}
+.kpi-card.is-highlight:hover,
+.chart-card.is-highlight:hover {
+  border-color: color-mix(
+    in srgb,
+    var(--kpi-accent, hsl(83 79% 60%)) 78%,
+    transparent
+  );
+  box-shadow:
+    inset 0 0 36px
+      color-mix(in srgb, var(--kpi-accent, hsl(83 79% 60%)) 23%, transparent),
+    0 0 31px
+      color-mix(in srgb, var(--kpi-accent, hsl(83 79% 60%)) 36%, transparent);
+}
+
+/* Chart card — container maior para gráficos/listas */
+.chart-card,
+.neon-card {
+  position: relative;
+  overflow: hidden;
+  background: hsl(240 18% 9%);
+  border: 1px solid hsl(240 21% 15%);
+  transition: border-color 0.2s ease;
+}
+.chart-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(
+    to right,
+    transparent,
+    var(--kpi-accent, hsl(83 79% 60%)),
+    transparent
+  );
+  opacity: 0.6;
+  pointer-events: none;
+}
+.chart-card:hover,
+.neon-card:hover {
+  border-color: hsl(83 79% 60% / 0.4);
+}
+
+/* Animações de alerta */
+@keyframes live-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(0.85);
+  }
+}
+.live-dot {
+  animation: live-pulse 2s ease-in-out infinite;
+}
+
+@keyframes health-alert-pulse {
+  0%,
+  100% {
+    border-color: hsl(4 100% 65% / 0.65);
+    background: hsl(4 100% 65% / 0.16);
+    box-shadow:
+      inset 0 0 34px hsl(4 100% 65% / 0.34),
+      0 0 22px hsl(4 100% 65% / 0.28);
+  }
+  50% {
+    border-color: hsl(4 100% 65% / 0.22);
+    background: hsl(4 100% 65% / 0.04);
+    box-shadow:
+      inset 0 0 12px hsl(4 100% 65% / 0.07),
+      0 0 6px hsl(4 100% 65% / 0.05);
+  }
+}
+.health-alert-pulse {
+  animation: health-alert-pulse 2.4s ease-in-out infinite;
+}
+
+/* Limpa hover roxo padrão do Recharts */
+.recharts-surface {
+  overflow: visible;
+}
+.recharts-tooltip-cursor {
+  fill: transparent !important;
+  stroke: none !important;
+}
+.recharts-cell:hover,
+.recharts-active-shape,
+.recharts-bar:hover .recharts-rectangle,
+.recharts-bar:hover .recharts-cell {
+  fill-opacity: 1 !important;
+  stroke: none !important;
+}
+
+/* Scrollbar discreto, dark-friendly */
+@layer base {
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: hsl(240 21% 15%);
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(240 9% 46% / 0.5);
+    background-clip: padding-box;
+  }
+}

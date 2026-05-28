@@ -1,0 +1,33 @@
+# CHAT-CDT — bloco de site para o Caddy.
+#
+# Não é um Caddyfile standalone: copie/anexe este bloco ao
+# /etc/caddy/Caddyfile da VPS (que já hospeda outros subdomínios)
+# e recarregue o Caddy:
+#
+#   sudo cp infra/Caddyfile /etc/caddy/chat-cdt.caddy   # ou append ao Caddyfile
+#   sudo systemctl reload caddy
+
+chat.cdt.7bee.ai {
+  reverse_proxy 127.0.0.1:3000
+  encode zstd gzip
+
+  header {
+    Strict-Transport-Security "max-age=31536000;"
+    X-Content-Type-Options nosniff
+    Referrer-Policy strict-origin-when-cross-origin
+    Permissions-Policy "geolocation=(), microphone=(), camera=()"
+  }
+
+  @assets path /_next/static/* /icon-*.png /badge.png /icon.svg /manifest.webmanifest
+  header @assets Cache-Control "public, max-age=31536000, immutable"
+
+  @sw path /sw.js
+  header @sw Cache-Control "no-store"
+
+  log {
+    output file /var/log/chat-cdt/access.log {
+      roll_size 50mb
+      roll_keep 5
+    }
+  }
+}

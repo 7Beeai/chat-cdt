@@ -1,0 +1,21 @@
+-- ============================================================================
+-- Seed mínimo CHAT-CDT
+--
+-- O tenant (units) já existe. Aqui apenas:
+--   1) Registra as WABAs do CHAT-CDT (uma linha por WABA assinada no app novo).
+--   2) Registra os phone_number_id (Graph API IDs) usados na v1.
+--
+-- Substituir os <PLACEHOLDERS> antes de rodar. Idempotente.
+-- ============================================================================
+
+-- Exemplo (adaptar):
+--
+-- with u as (select id from units where code = 'CDT' limit 1)
+-- insert into wabas (unit_id, waba_id, name)
+-- select u.id, '<WABA_ID_AQUI>', 'CDT Cobrança' from u
+-- on conflict (waba_id) do nothing;
+--
+-- with w as (select id from wabas where waba_id = '<WABA_ID_AQUI>')
+-- insert into chat_phone_numbers (waba_id, phone_number_id, display_phone)
+-- select w.id, '<PHONE_NUMBER_ID_GRAPH>', '+55 31 ...' from w
+-- on conflict (phone_number_id) do nothing;
