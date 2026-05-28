@@ -8,7 +8,6 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from '@/components/ui/select'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
@@ -62,6 +61,12 @@ export function TabsBar({
     navigate({ unit: nextStr === ALL_UNITS ? null : nextStr })
   }
 
+  const selectedLabel =
+    selectedUnitId == null
+      ? 'Todas as unidades'
+      : units.find((u) => u.id === selectedUnitId)?.name ??
+        'Todas as unidades'
+
   return (
     <div className="flex flex-wrap items-center gap-3">
       <Tabs value={value} onValueChange={handleTabChange} className="w-fit">
@@ -84,7 +89,9 @@ export function TabsBar({
           onValueChange={handleUnitChange}
         >
           <SelectTrigger className="h-8 min-w-[200px] text-xs">
-            <SelectValue placeholder="Todas as unidades" />
+            {/* Render direto o label legível — Base UI Select.Value mostra
+                o raw value por default e seria confuso. */}
+            <span className="line-clamp-1 text-left">{selectedLabel}</span>
           </SelectTrigger>
           <SelectContent>
             <SelectItem value={ALL_UNITS}>Todas as unidades</SelectItem>
