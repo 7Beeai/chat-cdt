@@ -1,7 +1,9 @@
-allowBuilds:
-  msw: set this to true or false
-  sharp: set this to true or false
-  unrs-resolver: set this to true or false
+# Não é monorepo, mas pnpm 11+ exige o campo `packages` quando o arquivo
+# existe (senão `pnpm install` falha com "packages field missing or empty").
+packages: []
+
+# Builds permitidos (pnpm pergunta na primeira instalação; pré-aprovados aqui
+# para deploy não-interativo).
 onlyBuiltDependencies:
   - sharp
   - unrs-resolver

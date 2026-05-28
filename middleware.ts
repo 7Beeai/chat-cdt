@@ -4,6 +4,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 const PUBLIC_PATHS = [
   '/login',
   '/api/meta/webhook',
+  '/api/health',
   '/manifest.webmanifest',
   '/sw.js',
   '/icon-192.png',

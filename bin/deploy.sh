@@ -17,7 +17,8 @@ set -euo pipefail
 
 APP_DIR="${APP_DIR:-/var/www/chat-cdt}"
 DOMAIN="${DOMAIN:-chat.cdt.7bee.ai}"
-HEALTH_URL_LOCAL="http://127.0.0.1:3000/api/meta/webhook?hub.mode=subscribe&hub.verify_token=x&hub.challenge=x"
+HEALTH_URL_LOCAL="http://127.0.0.1:3000/api/health"
+HEALTH_MAX_ATTEMPTS="${HEALTH_MAX_ATTEMPTS:-30}"   # 30 × 2s = 60s
 
 log()  { printf '\033[1;34m[deploy]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[deploy]\033[0m %s\n' "$*" >&2; }
@@ -110,21 +111,29 @@ if [ "$proxy_changed" -eq 1 ]; then
 fi
 
 # ---------- 9. Health check + rollback ----------
-log "health check..."
+log "health check (até $((HEALTH_MAX_ATTEMPTS*2))s)..."
 ok=0
-for i in 1 2 3 4 5 6 7 8 9 10; do
+code=000
+for i in $(seq 1 "$HEALTH_MAX_ATTEMPTS"); do
   code="$(curl -s -o /dev/null -w '%{http_code}' "$HEALTH_URL_LOCAL" || echo 000)"
-  if [ "$code" = "200" ] || [ "$code" = "403" ]; then ok=1; break; fi
+  if [ "$code" = "200" ]; then ok=1; break; fi
   sleep 2
 done
 
 if [ "$ok" -ne 1 ]; then
   warn "health check falhou (último HTTP: $code). Rollback para $PREV_SHA"
+  # Rollback mínimo: volta git, rebuilda com node_modules existente, restart.
+  # NÃO roda pnpm install — se deps mudaram e isso é o problema, é melhor
+  # falhar visível pro humano arrumar do que infinite loop.
   git reset --hard "$PREV_SHA"
-  pnpm install --prod=false --frozen-lockfile
-  pnpm build
-  pm2 restart chat-cdt --update-env
-  die "rollback aplicado, ver: pm2 logs chat-cdt --lines 100"
+  if pnpm build; then
+    pm2 restart chat-cdt --update-env
+    warn "rollback completo. App rodando no commit $PREV_SHA. Investigar: pm2 logs chat-cdt --lines 100"
+  else
+    warn "rollback do build falhou — VPS pode estar servindo a versão nova quebrada."
+    warn "Intervenção manual: ssh na VPS, cd $APP_DIR, ajustar, rodar pnpm install + build + pm2 restart"
+  fi
+  exit 1
 fi
 
 log "deploy OK"
