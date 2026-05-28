@@ -35,16 +35,19 @@ export default async function InboxPage({
     redirect('/login')
   }
 
-  // Unidades às quais este operador tem acesso (via user_units → profiles).
-  // RLS já restringe; o select aqui só puxa o que o operador pode ver.
-  const { data: unitRows } = await supabase
-    .from('user_units')
-    .select('units!inner(id, code, name)')
+  // Unidades às quais este operador tem acesso.
+  // Usamos a RPC chat_my_units() (SECURITY DEFINER) porque a RLS pré-existente
+  // em user_units compara user_id com auth.uid() — mas user_id aponta pra
+  // profiles.id, não pra auth.uid(). Select direto retorna vazio. Ver
+  // migration 0005_my_units_helper.sql.
+  const { data: unitRows, error: unitsError } = await supabase.rpc(
+    'chat_my_units'
+  )
+  if (unitsError) {
+    console.error('[inbox] failed to load units', unitsError)
+  }
 
-  const units: UnitOption[] = (unitRows ?? [])
-    .map((r) => (r as unknown as { units: UnitOption }).units)
-    .filter(Boolean)
-    .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
+  const units: UnitOption[] = (unitRows ?? []) as UnitOption[]
 
   // Defensivo: ignora ?unit= se não estiver na lista do operador.
   const effectiveUnitId =
