@@ -119,10 +119,19 @@ if ! systemctl is-enabled pm2-"$USER" >/dev/null 2>&1; then
   pm2 save
 fi
 
+# Carrega PORT do .env.local (default 3000)
+set -a
+. "$APP_DIR/.env.local"
+set +a
+PORT="${PORT:-3000}"
+log "porta configurada: $PORT"
+
 # ---------- 10. Web server config ----------
 if [ "$WEB_SERVER" = "nginx" ]; then
-  log "instalando bloco nginx em sites-available/chat-cdt"
-  sudo cp "$APP_DIR/infra/nginx-chat-cdt.conf" /etc/nginx/sites-available/chat-cdt
+  log "instalando bloco nginx (porta $PORT) em sites-available/chat-cdt"
+  sed "s|127\.0\.0\.1:3000|127.0.0.1:${PORT}|g" \
+    "$APP_DIR/infra/nginx-chat-cdt.conf" > /tmp/chat-cdt.nginx.conf
+  sudo mv /tmp/chat-cdt.nginx.conf /etc/nginx/sites-available/chat-cdt
   sudo ln -sf /etc/nginx/sites-available/chat-cdt /etc/nginx/sites-enabled/chat-cdt
   sudo nginx -t || die "config nginx inválida"
   sudo systemctl reload nginx
@@ -134,26 +143,28 @@ else
     echo "import /etc/caddy/conf.d/*.caddy" | sudo tee -a /etc/caddy/Caddyfile >/dev/null
   fi
   sudo mkdir -p /etc/caddy/conf.d
-  sudo cp "$APP_DIR/infra/Caddyfile" "$CADDY_SNIPPET"
+  sed "s|127\.0\.0\.1:3000|127.0.0.1:${PORT}|g" \
+    "$APP_DIR/infra/Caddyfile" | sudo tee "$CADDY_SNIPPET" >/dev/null
   sudo caddy validate --config /etc/caddy/Caddyfile || die "Caddyfile inválido"
   sudo systemctl reload caddy
   log "caddy recarregado"
 fi
 
 # ---------- 11. Health check ----------
-log "esperando o Next ficar pronto..."
-for i in 1 2 3 4 5 6 7 8 9 10; do
-  if curl -sf -o /dev/null -w '%{http_code}' "http://127.0.0.1:3000/api/meta/webhook?hub.mode=subscribe&hub.verify_token=x&hub.challenge=x" | grep -qE '^(200|403)$'; then
+log "esperando o Next ficar pronto na porta $PORT..."
+for i in $(seq 1 30); do
+  code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${PORT}/api/health" || echo 000)"
+  if [ "$code" = "200" ]; then
     log "Next OK"
     break
   fi
   sleep 2
-  [ "$i" -eq 10 ] && die "Next não respondeu em 20s, ver: pm2 logs chat-cdt"
+  [ "$i" -eq 30 ] && die "Next não respondeu em 60s, ver: pm2 logs chat-cdt"
 done
 
 # ---------- 12. TLS externo ----------
 log "testando $DOMAIN (pode demorar 30s no primeiro cert)"
-if curl -sSf -o /dev/null "https://$DOMAIN/api/meta/webhook?hub.mode=subscribe&hub.verify_token=x&hub.challenge=x"; then
+if curl -sSf -o /dev/null "https://$DOMAIN/api/health"; then
   log "TLS externo OK"
 else
   warn "TLS externo ainda não responde — DNS pode não ter propagado. Aguarde uns minutos e teste: curl -I https://$DOMAIN"
