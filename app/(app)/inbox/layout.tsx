@@ -35,24 +35,28 @@ export default async function InboxLayout({
     unit:units(id, code, name)
   `
 
-  // Open conversations (queued/human/ai) — covers Aguardando/Meus/Todos tabs.
+  // v1 mostra SÓ handoffs. Conversas que a IA está tocando (routing='ai') não
+  // entram. Abertas em fila/atendimento humano:
   const { data: openRows, error: openErr } = await supabase
     .from('conversations')
     .select(selectCols)
     .eq('status', 'open')
+    .in('routing', ['queued', 'human'])
+    .not('handoff_reason', 'is', null)
     .order('priority', { ascending: false })
     .order('last_inbound_at', { ascending: false, nullsFirst: false })
-    .limit(400)
-  if (openErr) console.error('[inbox] open fetch failed', openErr)
+    .limit(300)
+  if (openErr) console.error('[inbox] open handoffs fetch failed', openErr)
 
-  // Recent closed — bounded, for the Encerrados tab.
+  // Encerrados: só handoffs encerrados (com motivo) — exclui auto-fechados da IA.
   const { data: closedRows, error: closedErr } = await supabase
     .from('conversations')
     .select(selectCols)
     .eq('status', 'closed')
+    .not('handoff_reason', 'is', null)
     .order('last_inbound_at', { ascending: false, nullsFirst: false })
-    .limit(100)
-  if (closedErr) console.error('[inbox] closed fetch failed', closedErr)
+    .limit(200)
+  if (closedErr) console.error('[inbox] closed handoffs fetch failed', closedErr)
 
   const conversations = [
     ...((openRows ?? []) as unknown as ConversationListItem[]),
@@ -91,9 +95,5 @@ export default async function InboxLayout({
     preview: previewMap[c.id] ?? null,
   }))
 
-  return (
-    <InboxWorkspace initial={items} userId={user.id}>
-      {children}
-    </InboxWorkspace>
-  )
+  return <InboxWorkspace initial={items}>{children}</InboxWorkspace>
 }

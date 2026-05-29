@@ -10,11 +10,10 @@ import {
 } from 'react'
 import { toast } from 'sonner'
 
+import { bulkAssignToMe, bulkClose } from '@/app/(app)/inbox/[id]/actions'
 import {
-  bulkAssignToMe,
-  bulkClose,
-} from '@/app/(app)/inbox/[id]/actions'
-import {
+  INBOX_TABS,
+  isHandoffMember,
   matchesSearch,
   matchesTab,
   sortItems,
@@ -38,19 +37,27 @@ type MessageRow = {
   type: string | null
 }
 
+/** First reason tab that has items (so the operator doesn't land on an empty tab). */
+function pickDefaultTab(items: ConversationListItem[]): InboxTab {
+  for (const t of INBOX_TABS) {
+    if (t.value === 'closed') continue
+    if (items.some((c) => matchesTab(c, t.value))) return t.value
+  }
+  return 'payment_re_register'
+}
+
 export function InboxWorkspace({
   initial,
-  userId,
   children,
 }: {
   initial: ConversationListItem[]
-  userId: string
   children: React.ReactNode
 }) {
   const [items, setItems] = useState<ConversationListItem[]>(initial)
-  const [tab, setTab] = useState<InboxTab>('queued')
+  const [tab, setTab] = useState<InboxTab>(() => pickDefaultTab(initial))
   const [search, setSearch] = useState('')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [, setNow] = useState(0)
   const [, startTransition] = useTransition()
 
   const router = useRouter()
@@ -62,13 +69,19 @@ export function InboxWorkspace({
     setItems(initial)
   }, [initial])
 
-  // Active conversation id, derived from the URL (thread route).
+  // Low-frequency ticker so SLA tones + the "estourado" vital advance over time
+  // (they're derived from Date.now()). 30s matches the thread header cadence.
+  useEffect(() => {
+    const t = setInterval(() => setNow((n) => n + 1), 30_000)
+    return () => clearInterval(t)
+  }, [])
+
   const activeId = useMemo(() => {
     const m = /^\/inbox\/([^/]+)/.exec(pathname)
     return m ? m[1] : null
   }, [pathname])
 
-  // -- Realtime: keep the whole working set in sync (membership, not tab) ----
+  // -- Realtime: keep the handoff working set in sync ------------------------
   useEffect(() => {
     const supabase = createClient()
     const channel = supabase
@@ -88,12 +101,17 @@ export function InboxWorkspace({
           }
           const next = payload.new as ConversationRow | null
           if (!next) return
+          const member = isHandoffMember(next)
           setItems((curr) => {
             const idx = curr.findIndex((c) => c.id === next.id)
+            // Not (or no longer) a handoff — drop it if present (e.g. returned
+            // to AI, or a brand-new AI conversation we never want to show).
+            if (!member) {
+              return idx === -1 ? curr : curr.filter((c) => c.id !== next.id)
+            }
             if (idx === -1) {
-              // New conversation we haven't seen. Add a stub (realtime payload
-              // lacks joined contact/unit) — degrades gracefully; a future
-              // navigation refreshes the server data.
+              // Just became a handoff. Stub it (realtime payload lacks joins);
+              // a navigation/refresh fills contact/unit from the server.
               const stub: ConversationListItem = {
                 id: next.id,
                 unit_id: next.unit_id,
@@ -110,7 +128,6 @@ export function InboxWorkspace({
               }
               return sortItems([stub, ...curr])
             }
-            // Merge scalar fields, preserve joined contact/unit + preview.
             const merged: ConversationListItem = {
               ...curr[idx],
               unit_id: next.unit_id,
@@ -174,48 +191,43 @@ export function InboxWorkspace({
 
   const counts = useMemo(() => {
     const c: Record<InboxTab, number> = {
-      queued: 0,
-      mine: 0,
-      all: 0,
+      payment_re_register: 0,
+      other_support: 0,
+      cancel: 0,
       closed: 0,
     }
     for (const it of unitScoped) {
-      if (matchesTab(it, 'queued', userId)) c.queued++
-      if (matchesTab(it, 'mine', userId)) c.mine++
-      if (matchesTab(it, 'all', userId)) c.all++
-      if (matchesTab(it, 'closed', userId)) c.closed++
+      for (const t of INBOX_TABS) {
+        if (matchesTab(it, t.value)) c[t.value]++
+      }
     }
     return c
-  }, [unitScoped, userId])
+  }, [unitScoped])
 
   const vitals = useMemo(() => {
     let waiting = 0
     let breached = 0
     let active = 0
     for (const it of unitScoped) {
-      if (matchesTab(it, 'queued', userId)) {
+      if (it.status === 'open' && it.routing === 'queued') {
         waiting++
         const w = waitMinutes(it.last_inbound_at)
         if (w != null && w >= 20) breached++
       }
-      if (
-        it.status === 'open' &&
-        it.routing === 'human' &&
-        it.assigned_operator_id !== null
-      ) {
-        active++
-      }
+      if (it.status === 'open' && it.routing === 'human') active++
     }
     return { waiting, breached, active }
-  }, [unitScoped, userId])
+  }, [unitScoped])
 
-  const rows = useMemo(() => {
-    return sortItems(
-      unitScoped.filter(
-        (c) => matchesTab(c, tab, userId) && matchesSearch(c, search),
+  const rows = useMemo(
+    () =>
+      sortItems(
+        unitScoped.filter(
+          (c) => matchesTab(c, tab) && matchesSearch(c, search),
+        ),
       ),
-    )
-  }, [unitScoped, tab, userId, search])
+    [unitScoped, tab, search],
+  )
 
   // -- Keyboard J/K navigation within the visible rows -----------------------
   useEffect(() => {
@@ -253,10 +265,7 @@ export function InboxWorkspace({
   const clearSelection = useCallback(() => setSelectedIds(new Set()), [])
 
   const runBulk = useCallback(
-    (
-      label: string,
-      action: (ids: string[]) => Promise<{ error?: string }>,
-    ) => {
+    (label: string, action: (ids: string[]) => Promise<{ error?: string }>) => {
       const ids = Array.from(selectedIds)
       if (ids.length === 0) return
       startTransition(async () => {

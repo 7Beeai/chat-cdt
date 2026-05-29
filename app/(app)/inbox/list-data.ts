@@ -1,20 +1,31 @@
 /**
- * Shared types + filtering/sorting for the inbox list. Used by the server
- * working-set fetch (layout) and the client workspace (filtering + realtime).
+ * Shared types + filtering/sorting for the inbox list.
  *
- * Filtering is CLIENT-SIDE: the layout fetches the operator's working set once
- * (all open + recent closed, RLS-scoped to their units) and the workspace
- * filters by tab/unit/search instantly — no server round-trip per click.
+ * v1 SCOPE: this workspace shows ONLY handoffs (conversations the n8n AI
+ * escalated to a human). Conversations the AI is still handling (routing='ai')
+ * never appear. The tabs are the handoff REASONS, plus closed handoffs.
+ *
+ * Filtering is CLIENT-SIDE over a working set fetched once by the layout
+ * (open handoffs + recent closed handoffs, RLS-scoped to the operator's units).
  */
 
 import type { MessagePreview } from './preview'
 
-export type InboxTab = 'queued' | 'mine' | 'all' | 'closed'
+export type HandoffReason = 'payment_re_register' | 'other_support' | 'cancel'
+
+/** Canonical, single-source labels for each handoff reason. */
+export const HANDOFF_LABEL: Record<HandoffReason, string> = {
+  payment_re_register: 'Recadastro pagamento',
+  other_support: 'Suporte',
+  cancel: 'Cancelamento',
+}
+
+export type InboxTab = HandoffReason | 'closed'
 
 export const INBOX_TABS: { value: InboxTab; label: string }[] = [
-  { value: 'queued', label: 'Aguardando' },
-  { value: 'mine', label: 'Meus' },
-  { value: 'all', label: 'Todos' },
+  { value: 'payment_re_register', label: 'Recadastro pagamento' },
+  { value: 'other_support', label: 'Suporte' },
+  { value: 'cancel', label: 'Cancelamento' },
   { value: 'closed', label: 'Encerrados' },
 ]
 
@@ -23,7 +34,7 @@ export type ConversationListItem = {
   unit_id: string | null
   status: 'open' | 'snoozed' | 'closed'
   routing: 'ai' | 'queued' | 'human'
-  handoff_reason: 'payment_re_register' | 'cancel' | 'other_support' | null
+  handoff_reason: HandoffReason | null
   priority: number
   last_inbound_at: string | null
   customer_window_expires_at: string | null
@@ -39,7 +50,7 @@ export type ConversationRow = {
   unit_id: string | null
   status: ConversationListItem['status']
   routing: ConversationListItem['routing']
-  handoff_reason: ConversationListItem['handoff_reason']
+  handoff_reason: HandoffReason | null
   priority: number
   last_inbound_at: string | null
   customer_window_expires_at: string | null
@@ -47,31 +58,32 @@ export type ConversationRow = {
 }
 
 /**
- * Tab membership. `userId` is the auth uid — `assigned_operator_id` stores the
- * auth uid (see actions.assignToMe), so "Meus" must compare against it.
+ * Whether a conversation belongs to the handoff workspace at all. A handoff
+ * happened (handoff_reason set) and either it's closed, or it's open and NOT
+ * back in the AI's hands. Used by the realtime reducer to add/drop rows.
  */
+export function isHandoffMember(
+  c: Pick<ConversationListItem, 'status' | 'routing' | 'handoff_reason'>,
+): boolean {
+  if (!c.handoff_reason) return false
+  if (c.status === 'closed') return true
+  return c.status === 'open' && c.routing !== 'ai'
+}
+
+/** Tab membership (the tabs are handoff reasons + closed). */
 export function matchesTab(
-  row: Pick<
+  c: Pick<
     ConversationListItem,
-    'status' | 'routing' | 'assigned_operator_id'
+    'status' | 'routing' | 'handoff_reason'
   >,
   tab: InboxTab,
-  userId: string,
 ): boolean {
-  if (tab === 'queued') {
-    return (
-      row.status === 'open' &&
-      (row.routing === 'queued' || row.routing === 'human') &&
-      row.assigned_operator_id === null
-    )
+  if (tab === 'closed') {
+    return c.status === 'closed' && c.handoff_reason != null
   }
-  if (tab === 'mine') {
-    return row.status === 'open' && row.assigned_operator_id === userId
-  }
-  if (tab === 'all') {
-    return row.status === 'open'
-  }
-  return row.status === 'closed'
+  return (
+    c.status === 'open' && c.routing !== 'ai' && c.handoff_reason === tab
+  )
 }
 
 /** Default order: priority desc, then most recent activity first. */
