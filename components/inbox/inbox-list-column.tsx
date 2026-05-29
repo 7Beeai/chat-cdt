@@ -44,17 +44,9 @@ export function InboxListColumn({
 }) {
   return (
     <div className="flex w-[360px] shrink-0 flex-col border-r border-border bg-background xl:w-[400px]">
-      {/* Header (with subtle top glow) */}
-      <div className="relative shrink-0 px-[18px] pt-4">
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-x-0 -top-10 h-40"
-          style={{
-            background:
-              'radial-gradient(ellipse 70% 100% at 30% 0%, hsl(83 79% 60% / 0.10) 0%, transparent 70%)',
-          }}
-        />
-        <div className="relative">
+      {/* Header */}
+      <div className="shrink-0 px-[18px] pt-4">
+        <div>
           <div className="flex items-baseline gap-2.5">
             <h1 className="text-[22px] font-extrabold tracking-[-0.02em] text-foreground">
               Inbox

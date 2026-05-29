@@ -425,7 +425,9 @@ function Bubble({
   const bgClass = (() => {
     if (isIn) return 'bg-card text-foreground border border-border/60'
     if (tone === 'out-operator')
-      return 'bg-accent text-accent-foreground shadow-sm shadow-accent/10'
+      // Tom de lime suave (10%) — o lime cheio fica reservado pro botão Enviar
+      // e estados ativos. Conversa inteira de lime sólido foi rejeitada.
+      return 'bg-accent/10 text-foreground border border-accent/20'
     // out-ai e out-system
     return 'bg-card text-foreground border border-border/60'
   })()
@@ -461,14 +463,12 @@ function Bubble({
             <span
               className={cn(
                 'ml-2 inline-flex translate-y-0.5 items-center gap-1 align-baseline font-mono-num text-[10px]',
-                tone === 'out-operator'
-                  ? 'text-accent-foreground/70'
-                  : 'text-muted-foreground/80',
+                'text-muted-foreground/80',
               )}
             >
               {formatTime(msg.created_at)}
               {!isIn && (
-                <StatusIcon status={msg.status} tone={tone} />
+                <StatusIcon status={msg.status} />
               )}
             </span>
           )}
@@ -484,22 +484,15 @@ function Bubble({
           )}
         >
           <span>{formatTime(msg.created_at)}</span>
-          {!isIn && <StatusIcon status={msg.status} tone={tone} />}
+          {!isIn && <StatusIcon status={msg.status} />}
         </div>
       )}
     </div>
   )
 }
 
-function StatusIcon({
-  status,
-  tone,
-}: {
-  status: Message['status']
-  tone: SenderTone
-}) {
-  const onAccent = tone === 'out-operator'
-  const muted = onAccent ? 'text-accent-foreground/60' : 'text-muted-foreground/80'
+function StatusIcon({ status }: { status: Message['status'] }) {
+  const muted = 'text-muted-foreground/80'
 
   if (status === 'pending')
     return <Clock className={cn('size-3', muted)} aria-label="pendente" />
@@ -512,10 +505,7 @@ function StatusIcon({
   if (status === 'read')
     return (
       <CheckCheck
-        className={cn(
-          'size-3',
-          onAccent ? 'text-accent-foreground' : 'text-sky-400',
-        )}
+        className={cn('size-3', 'text-sky-400')}
         aria-label="lida"
       />
     )

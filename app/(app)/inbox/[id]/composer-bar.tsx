@@ -296,13 +296,18 @@ export function ComposerBar({
           </Button>
         </div>
 
-        {/* Footer: char counter (só perto do limite) + hint */}
-        {(showCounter || !insideWindow) && (
-          <div className="mt-1.5 flex items-center justify-end gap-3 px-2 text-[10px] text-muted-foreground">
+        {/* Footer calmo persistente: janela Meta (esq) + atalhos (dir) */}
+        <div className="mt-1.5 flex items-center justify-between gap-3 px-2 font-mono text-[9.5px] uppercase tracking-[0.08em] text-muted-foreground">
+          <span>
+            {insideWindow
+              ? `Janela Meta · ${formatShortRemaining(remainingMs)} restantes`
+              : 'Fora da janela 24h'}
+          </span>
+          <span className="flex items-center gap-2.5">
             {showCounter && (
               <span
                 className={cn(
-                  'font-mono-num',
+                  'font-mono-num normal-case',
                   charsLeft < 50 && 'text-amber-400',
                   charsLeft < 0 && 'text-destructive',
                 )}
@@ -310,8 +315,9 @@ export function ComposerBar({
                 {charsLeft} restantes
               </span>
             )}
-          </div>
-        )}
+            <span>↵ enviar · ⇧↵ nova linha</span>
+          </span>
+        </div>
       </form>
 
       {canTemplate && (

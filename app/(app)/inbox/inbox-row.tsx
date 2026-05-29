@@ -142,7 +142,7 @@ export function InboxRow({
       <div className="relative size-[38px] shrink-0">
         <div
           className={cn(
-            'flex size-[38px] items-center justify-center rounded-full border text-[12.5px] font-bold',
+            'flex size-[38px] items-center justify-center rounded-full border-[1.5px] text-[12.5px] font-bold',
             (selected || onToggleSelect) && 'group-hover:opacity-0',
             selected && 'opacity-0',
           )}

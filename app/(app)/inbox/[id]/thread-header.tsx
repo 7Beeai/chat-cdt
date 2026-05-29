@@ -114,7 +114,7 @@ export function ThreadHeader({ conv, contextOpen, onToggleContext }: Props) {
 
       {/* Identity */}
       <div
-        className="flex size-9 shrink-0 items-center justify-center rounded-full border text-[12.5px] font-bold"
+        className="flex size-9 shrink-0 items-center justify-center rounded-full border-[1.5px] text-[12.5px] font-bold"
         style={avatarStyle}
         aria-hidden
       >
