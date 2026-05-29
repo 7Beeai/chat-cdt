@@ -24,12 +24,14 @@ export function ThreadPane({
   userId,
   initialMediaUrls,
   debtor,
+  operatorNames,
 }: {
   initial: Message[]
   conversation: ConversationView
   userId: string
   initialMediaUrls: Record<string, MediaState>
   debtor: DebtorContext | null
+  operatorNames: Record<string, string>
 }) {
   const [contextOpen, setContextOpen] = useState(true)
 
@@ -40,6 +42,7 @@ export function ThreadPane({
         conversation={conversation}
         userId={userId}
         initialMediaUrls={initialMediaUrls}
+        operatorNames={operatorNames}
         contextOpen={contextOpen}
         onToggleContext={() => setContextOpen((v) => !v)}
       />

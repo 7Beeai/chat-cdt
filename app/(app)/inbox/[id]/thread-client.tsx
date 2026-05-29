@@ -13,6 +13,7 @@ import {
   Clock,
   TriangleAlert,
   Sparkles,
+  UserRound,
 } from 'lucide-react'
 
 import { createClient } from '@/lib/supabase/client'
@@ -102,6 +103,7 @@ type Props = {
   conversation: ConversationView
   userId: string
   initialMediaUrls: Record<string, MediaState>
+  operatorNames?: Record<string, string>
   contextOpen?: boolean
   onToggleContext?: () => void
 }
@@ -111,6 +113,7 @@ export function ThreadClient({
   conversation,
   userId,
   initialMediaUrls,
+  operatorNames = {},
   contextOpen,
   onToggleContext,
 }: Props) {
@@ -282,6 +285,7 @@ export function ThreadClient({
                   key={item.key}
                   group={item}
                   mediaUrls={mediaUrls}
+                  operatorNames={operatorNames}
                 />
               ),
             )
@@ -339,17 +343,27 @@ function DateDivider({ label }: { label: string }) {
 function MessageGroupView({
   group,
   mediaUrls,
+  operatorNames,
 }: {
   group: MessageGroup
   mediaUrls: Record<string, MediaState>
+  operatorNames: Record<string, string>
 }) {
   const align = group.tone === 'in' ? 'items-start' : 'items-end'
   const groupGap = 'gap-[3px]' // intra-grupo: bubbles colados
 
+  const operatorName =
+    group.tone === 'out-operator'
+      ? (operatorNames[group.messages[0]?.operator_id ?? ''] ?? 'Operador')
+      : null
+
   return (
     <div className={cn('mt-4 flex flex-col first:mt-0', align, groupGap)}>
-      {/* Chip "IA" só uma vez no início de grupo de IA */}
+      {/* Badge de autoria no início do grupo: IA, ou nome do operador */}
       {group.tone === 'out-ai' && <AIBadge />}
+      {group.tone === 'out-operator' && operatorName && (
+        <OperatorBadge name={operatorName} />
+      )}
 
       {group.messages.map((m, i) => {
         const position: BubblePosition =
@@ -382,6 +396,16 @@ function AIBadge() {
     <span className="mb-0.5 inline-flex items-center gap-1 rounded-full border border-accent/30 bg-accent/10 px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wider text-accent">
       <Sparkles className="size-2.5" />
       IA
+    </span>
+  )
+}
+
+// Mesmo padrão da badge da IA, em ciano (tom do operador), com o nome de quem enviou.
+function OperatorBadge({ name }: { name: string }) {
+  return (
+    <span className="mb-0.5 inline-flex max-w-[200px] items-center gap-1 rounded-full border border-sky-400/30 bg-sky-400/10 px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wider text-sky-400">
+      <UserRound className="size-2.5 shrink-0" />
+      <span className="truncate">{name}</span>
     </span>
   )
 }
@@ -422,14 +446,15 @@ function Bubble({
       )
 
   // Cores por tone
+  // 3 cores por remetente (harmônicas com o dark + lime):
+  //   cliente → neutro · IA → lime · operador → ciano
+  // Cada tom aparece na bolha E na badge correspondente.
   const bgClass = (() => {
-    if (isIn) return 'bg-card text-foreground border border-border/60'
+    if (isIn) return 'bg-white/[0.05] text-foreground border border-border/60'
     if (tone === 'out-operator')
-      // Tom de lime suave (10%) — o lime cheio fica reservado pro botão Enviar
-      // e estados ativos. Conversa inteira de lime sólido foi rejeitada.
-      return 'bg-accent/10 text-foreground border border-accent/20'
+      return 'bg-sky-400/10 text-foreground border border-sky-400/25'
     // out-ai e out-system
-    return 'bg-card text-foreground border border-border/60'
+    return 'bg-accent/10 text-foreground border border-accent/20'
   })()
 
   const bubbleClass = cn(

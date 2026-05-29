@@ -195,6 +195,31 @@ export default async function ThreadPage({
     debtor = debtorData as DebtorContext
   }
 
+  // Nomes dos operadores que enviaram nesta conversa (para a badge de autoria).
+  // RLS de profiles só deixa ler o próprio perfil → via RPC SECURITY DEFINER.
+  const operatorIds = Array.from(
+    new Set<string>([
+      user.id,
+      ...messages
+        .map((m) => m.operator_id)
+        .filter((x): x is string => !!x),
+    ]),
+  )
+  const operatorNames: Record<string, string> = {}
+  if (operatorIds.length > 0) {
+    const { data: ops, error: opsErr } = await supabase.rpc(
+      'chat_operator_names',
+      { p_ids: operatorIds },
+    )
+    if (opsErr) {
+      console.error('[inbox/[id]] operator names error', opsErr)
+    } else {
+      for (const o of (ops ?? []) as { user_id: string; name: string | null }[]) {
+        if (o.name) operatorNames[o.user_id] = o.name
+      }
+    }
+  }
+
   return (
     <ThreadPane
       initial={messages}
@@ -202,6 +227,7 @@ export default async function ThreadPage({
       userId={user.id}
       initialMediaUrls={mediaUrlMap}
       debtor={debtor}
+      operatorNames={operatorNames}
     />
   )
 }
