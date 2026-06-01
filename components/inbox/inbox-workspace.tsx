@@ -148,6 +148,11 @@ export function InboxWorkspace({
               }
               return sortItems([stub, ...curr])
             }
+            // NB: `contact` is intentionally NOT merged from the realtime
+            // payload — it carries the raw WhatsApp profile name, and the
+            // server already resolved contact.name to the validated CRM name
+            // (see inbox/layout.tsx + migration 0013). Merging it here would
+            // silently revert displayed names to the WhatsApp garbage.
             const merged: ConversationListItem = {
               ...curr[idx],
               unit_id: next.unit_id,

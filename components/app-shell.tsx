@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import { Menu } from 'lucide-react'
 
@@ -15,7 +15,10 @@ const COLLAPSE_KEY = 'chat-cdt:sidebar-collapsed'
  * Client shell around the sidebar + main column.
  *
  * - Desktop (lg+): the sidebar is rendered inline and can be collapsed to an
- *   icon rail. The collapsed flag is persisted in localStorage.
+ *   icon rail. It auto-collapses when entering the inbox (the dense 4-column
+ *   view benefits from the room) and restores the manual preference on the way
+ *   out. The manual toggle still works while on a route; persisted in
+ *   localStorage.
  * - Compact (< lg): the sidebar moves off-canvas into a left drawer (Sheet),
  *   opened by a hamburger in a thin top bar. The bar is hidden on the thread
  *   detail route (`/inbox/<id>`), which already has its own header + back
@@ -36,13 +39,28 @@ export function AppShell({
   children: React.ReactNode
 }) {
   const pathname = usePathname()
+  const isInbox = pathname.startsWith('/inbox')
   const [collapsed, setCollapsed] = useState(false)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
 
-  // Restore the desktop collapse preference after mount (avoids SSR mismatch).
+  // Auto-collapse on entering the inbox; restore the manual preference on exit.
+  // Keyed on `isInbox` (not the full pathname), so navigating between the list
+  // and a thread — both /inbox/* — does NOT re-fire, leaving a manual expand
+  // intact while the operator stays in the inbox.
+  const prevInboxRef = useRef<boolean | null>(null)
   useEffect(() => {
-    if (localStorage.getItem(COLLAPSE_KEY) === '1') setCollapsed(true)
-  }, [])
+    const pref = () => localStorage.getItem(COLLAPSE_KEY) === '1'
+    const was = prevInboxRef.current
+    if (was === null) {
+      // First mount: inbox starts collapsed; elsewhere honor the saved pref.
+      setCollapsed(isInbox || pref())
+    } else if (isInbox && !was) {
+      setCollapsed(true) // entered the inbox
+    } else if (!isInbox && was) {
+      setCollapsed(pref()) // left the inbox → restore manual preference
+    }
+    prevInboxRef.current = isInbox
+  }, [isInbox])
 
   function toggleCollapse() {
     setCollapsed((v) => {

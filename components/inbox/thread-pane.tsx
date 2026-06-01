@@ -19,10 +19,26 @@ type MediaState = { url: string | null; pending: boolean }
 const useIsoLayoutEffect =
   typeof window !== 'undefined' ? useLayoutEffect : useEffect
 
+// Lembra a última escolha de abrir/fechar os detalhes entre contatos (desktop).
+const CONTEXT_KEY = 'chat-cdt:context-open'
+
+function isDesktop(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    window.matchMedia('(min-width: 1024px)').matches
+  )
+}
+
 /**
  * Lays out the thread (flex) + the collapsible context panel. Owns the
  * `contextOpen` state so the thread header's "i" toggle can show/hide the
- * panel without a navigation. Defaults open on wide screens.
+ * panel without a navigation.
+ *
+ * Persistence: on desktop the open/closed choice is stored in localStorage and
+ * restored on every contact switch (each navigation remounts this component),
+ * so the panel keeps the operator's last decision instead of always reopening.
+ * On compact screens it's an ephemeral right-side overlay → always starts
+ * closed and never writes the desktop preference.
  */
 export function ThreadPane({
   initial,
@@ -39,12 +55,20 @@ export function ThreadPane({
   debtor: DebtorContext | null
   operatorNames: Record<string, string>
 }) {
-  // Open by default on desktop; closed on compact screens, where the panel is
-  // an overlay that would otherwise cover the thread on load.
-  const [contextOpen, setContextOpen] = useState(true)
+  // Default CLOSED (matches SSR); the layout effect restores the stored desktop
+  // choice before paint. First access (no stored pref) stays closed. Mobile is
+  // always closed (ephemeral overlay).
+  const [contextOpen, setContextOpen] = useState(false)
   useIsoLayoutEffect(() => {
-    if (window.matchMedia('(max-width: 1023px)').matches) setContextOpen(false)
+    if (!isDesktop()) return // already closed
+    setContextOpen(localStorage.getItem(CONTEXT_KEY) === '1')
   }, [])
+
+  // Set + persist the desktop preference (mobile overlay stays ephemeral).
+  function applyContext(next: boolean) {
+    setContextOpen(next)
+    if (isDesktop()) localStorage.setItem(CONTEXT_KEY, next ? '1' : '0')
+  }
 
   return (
     <div className="flex min-h-0 w-full">
@@ -55,20 +79,20 @@ export function ThreadPane({
         initialMediaUrls={initialMediaUrls}
         operatorNames={operatorNames}
         contextOpen={contextOpen}
-        onToggleContext={() => setContextOpen((v) => !v)}
+        onToggleContext={() => applyContext(!contextOpen)}
       />
       {contextOpen && (
         <>
           {/* Tap-to-close scrim — compact screens only (panel is an overlay) */}
           <div
-            onClick={() => setContextOpen(false)}
+            onClick={() => applyContext(false)}
             className="fixed inset-0 z-30 bg-black/50 lg:hidden"
             aria-hidden
           />
           <ContextPanel
             conversation={conversation}
             debtor={debtor}
-            onClose={() => setContextOpen(false)}
+            onClose={() => applyContext(false)}
           />
         </>
       )}
