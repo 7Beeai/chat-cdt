@@ -45,9 +45,9 @@ const HANDOFF_LABEL: Record<string, string> = {
 
 const HANDOFF_TONE: Record<string, string> = {
   payment_re_register:
-    'bg-amber-500/15 text-amber-400 border border-amber-500/30',
+    'bg-sky-500/15 text-sky-400 border border-sky-500/30',
   cancel: 'bg-red-500/15 text-red-400 border border-red-500/30',
-  other_support: 'bg-sky-500/15 text-sky-400 border border-sky-500/30',
+  other_support: 'bg-amber-500/15 text-amber-400 border border-amber-500/30',
 }
 
 const TWO_HOURS_MS = 2 * 60 * 60 * 1000

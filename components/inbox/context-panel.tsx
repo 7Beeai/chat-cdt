@@ -7,6 +7,7 @@ import {
   Copy,
   ExternalLink,
   Receipt,
+  X,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -31,9 +32,12 @@ const ROUTING_LABEL: Record<string, string> = {
 export function ContextPanel({
   conversation,
   debtor,
+  onClose,
 }: {
   conversation: ConversationView
   debtor: DebtorContext | null
+  /** Closes the panel — only surfaced on compact screens (overlay mode). */
+  onClose?: () => void
 }) {
   const contactName =
     conversation.contact?.name?.trim() ||
@@ -59,7 +63,19 @@ export function ContextPanel({
   const win = windowRemaining(conversation.customer_window_expires_at)
 
   return (
-    <aside className="flex w-[280px] shrink-0 flex-col overflow-y-auto border-l border-border bg-background xl:w-[300px]">
+    <aside className="fixed inset-y-0 right-0 z-40 flex w-[86%] max-w-[340px] flex-col overflow-y-auto border-l border-border bg-background shadow-2xl lg:static lg:z-auto lg:w-[280px] lg:shrink-0 lg:shadow-none xl:w-[300px]">
+      {/* Close — compact overlay only */}
+      {onClose && (
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Fechar detalhes"
+          className="absolute right-2.5 top-2.5 z-10 flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground lg:hidden"
+        >
+          <X className="size-4" />
+        </button>
+      )}
+
       {/* Identity */}
       <div className="flex flex-col items-center gap-2 px-5 pb-3.5 pt-5 text-center">
         <div

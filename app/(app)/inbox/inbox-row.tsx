@@ -35,9 +35,9 @@ const HANDOFF: Record<
   payment_re_register: {
     label: 'Pagamento',
     icon: CreditCard,
-    iconColor: 'text-amber-400',
+    iconColor: 'text-sky-400',
   },
-  other_support: { label: 'Suporte', icon: HelpCircle, iconColor: 'text-sky-400' },
+  other_support: { label: 'Suporte', icon: HelpCircle, iconColor: 'text-amber-400' },
 }
 
 const PREVIEW_ICON: Partial<Record<PreviewKind, LucideIcon>> = {
@@ -92,7 +92,7 @@ export function InboxRow({
   const unitSeed = conv.unit?.id ?? conv.unit_id
   const uc = unitSeed ? unitColor(unitSeed) : null
   const unitLabel =
-    conv.unit?.code?.toUpperCase() || conv.unit?.name || null
+    conv.unit?.name || conv.unit?.code?.toUpperCase() || null
 
   const isQueued = conv.routing === 'queued' && !conv.assigned_operator_id
   const isAssigned = !!conv.assigned_operator_id

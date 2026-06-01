@@ -1,6 +1,7 @@
 import { notFound, redirect } from 'next/navigation'
 
 import { createClient } from '@/lib/supabase/server'
+import { formatPersonName } from '@/lib/format/name'
 import {
   createMediaSignedUrl,
   extractMediaInfo,
@@ -193,6 +194,15 @@ export default async function ThreadPage({
     console.error('[inbox/[id]] debtor context error', debtorErr)
   } else if (debtorData) {
     debtor = debtorData as DebtorContext
+  }
+
+  // Mesma troca da lista: o nome validado da cobrança (formatado "Primeiro
+  // Último") vira o nome exibido. Tanto o header quanto o painel leem
+  // conversation.contact.name, então ambos passam a mostrar o nome tratado.
+  // Sem fetch extra — o debtor já foi carregado acima. Ver migration 0013.
+  if (debtor?.name && conversation.contact) {
+    const validated = formatPersonName(debtor.name)
+    if (validated) conversation.contact.name = validated
   }
 
   // Nomes dos operadores que enviaram nesta conversa (para a badge de autoria).

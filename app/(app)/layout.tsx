@@ -1,7 +1,6 @@
 import { redirect } from 'next/navigation'
 
-import { PushSetup } from '@/components/push-setup'
-import { Sidebar } from '@/components/sidebar'
+import { AppShell } from '@/components/app-shell'
 import { UnitFilterProvider, type UnitOption } from '@/components/inbox/unit-filter'
 import { Toaster } from '@/components/ui/sonner'
 import { getIsAdmin } from '@/lib/auth/admin'
@@ -62,17 +61,13 @@ export default async function AppLayout({
 
   return (
     <UnitFilterProvider units={units}>
-      <div className="flex h-screen w-full overflow-hidden bg-background">
-        <Sidebar
-          user={sidebarUser}
-          waitingCount={waitingCount ?? 0}
-          isAdmin={isAdmin}
-        />
-        <main className="flex h-screen min-w-0 flex-1 flex-col overflow-hidden">
-          <PushSetup />
-          {children}
-        </main>
-      </div>
+      <AppShell
+        user={sidebarUser}
+        waitingCount={waitingCount ?? 0}
+        isAdmin={isAdmin}
+      >
+        {children}
+      </AppShell>
       <Toaster theme="dark" />
     </UnitFilterProvider>
   )

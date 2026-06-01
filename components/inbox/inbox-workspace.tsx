@@ -28,6 +28,7 @@ import { extractPreview } from '@/app/(app)/inbox/preview'
 import { waitMinutes } from '@/app/(app)/inbox/sla'
 import type { CloseOutcome } from '@/app/(app)/inbox/outcomes'
 import { createClient } from '@/lib/supabase/client'
+import { cn } from '@/lib/utils'
 
 import { CloseDialog } from './close-dialog'
 import { InboxListColumn } from './inbox-list-column'
@@ -353,7 +354,14 @@ export function InboxWorkspace({
         onBulkAssign={() => runBulk('Atribuídas a você', bulkAssignToMe)}
         onBulkClose={() => setBulkCloseOpen(true)}
       />
-      <section className="relative flex min-w-0 flex-1 overflow-hidden">
+      <section
+        className={cn(
+          'relative min-w-0 flex-1 overflow-hidden',
+          // Compact: the thread region is hidden until a conversation is open
+          // (the list owns the screen). Always visible at lg+.
+          activeId ? 'flex' : 'hidden lg:flex',
+        )}
+      >
         {children}
       </section>
 

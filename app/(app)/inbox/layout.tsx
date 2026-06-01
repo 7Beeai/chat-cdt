@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 
 import { createClient } from '@/lib/supabase/server'
+import { formatPersonName } from '@/lib/format/name'
 
 import { InboxWorkspace } from '@/components/inbox/inbox-workspace'
 import type { ConversationListItem } from './list-data'
@@ -94,6 +95,31 @@ export default async function InboxLayout({
     ...c,
     preview: previewMap[c.id] ?? null,
   }))
+
+  // Substitui o nome exibido pelo nome VALIDADO da base de cobrança (formatado
+  // "Primeiro Último") quando há match — o nome do perfil do WhatsApp costuma
+  // ser emoji/apelido/lixo. Lote único, RLS-scoped, e a busca client-side já
+  // passa a casar pelo nome validado (filtra por contact.name). Falha degrada
+  // para o nome do WhatsApp. Ver migration 0013.
+  if (items.length > 0) {
+    const { data: crmNames, error: crmErr } = await supabase.rpc(
+      'chat_debtor_names',
+      { p_conversation_ids: items.map((c) => c.id) },
+    )
+    if (crmErr) {
+      console.error('[inbox] crm name resolution failed', crmErr)
+    } else if (crmNames) {
+      const byId = new Map(
+        (crmNames as { conversation_id: string; name: string | null }[]).map(
+          (r) => [r.conversation_id, r.name],
+        ),
+      )
+      for (const it of items) {
+        const validated = formatPersonName(byId.get(it.id))
+        if (validated && it.contact) it.contact.name = validated
+      }
+    }
+  }
 
   // Resolve names for every assigned operator present (owner display + the
   // operator filter). profiles RLS only exposes the own row, so we go through

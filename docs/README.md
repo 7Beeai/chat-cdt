@@ -13,6 +13,7 @@ Documentação viva do projeto. **Atualizar a cada decisão arquitetural ou muda
 7. [Deployment — VPS + Caddy + PM2](07-deployment.md)
 8. [Status — o que está feito e o que falta](08-status.md)
 9. [Decisões — ADR log](09-decisions.md)
+10. [Sessão 2026-05-29 — admin, ciclo de atendimento, relatórios](10-sessao-2026-05-29.md)
 
 ## Convenções da documentação
 

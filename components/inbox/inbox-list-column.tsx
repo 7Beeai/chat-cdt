@@ -10,6 +10,7 @@ import {
   type InboxTab,
 } from '@/app/(app)/inbox/list-data'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { cn } from '@/lib/utils'
 
 import { BulkActionBar } from './bulk-action-bar'
 import { FilterSelect } from './filter-select'
@@ -74,7 +75,14 @@ export function InboxListColumn({
     })),
   ]
   return (
-    <div className="flex w-[360px] shrink-0 flex-col border-r border-border bg-background xl:w-[400px]">
+    <div
+      className={cn(
+        'w-full shrink-0 flex-col border-r border-border bg-background lg:w-[360px] xl:w-[400px]',
+        // Compact: show the list only when no conversation is open; the thread
+        // takes over full-width once one is selected. Both show side-by-side at lg+.
+        activeId ? 'hidden lg:flex' : 'flex',
+      )}
+    >
       {/* Header */}
       <div className="shrink-0 px-[18px] pt-4">
         <div>

@@ -82,7 +82,7 @@ export function UsersManager({
   }
 
   return (
-    <div className="flex h-screen min-w-0 flex-1 flex-col overflow-hidden">
+    <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden">
       {/* Header */}
       <header className="flex items-center justify-between gap-3 border-b border-border px-6 py-4">
         <div className="min-w-0">

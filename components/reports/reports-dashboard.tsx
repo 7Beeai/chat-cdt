@@ -85,8 +85,8 @@ const PERIODS: { value: Period; label: string }[] = [
 
 const REASON_COLOR: Record<HandoffReason, string> = {
   cancel: '#f87171',
-  payment_re_register: '#fbbf24',
-  other_support: '#38bdf8',
+  payment_re_register: '#38bdf8',
+  other_support: '#fbbf24',
 }
 
 function rangeOf(period: Period): { from: string; to: string } {
@@ -152,7 +152,7 @@ export function ReportsDashboard() {
     : 'Todas as unidades'
 
   return (
-    <div className="flex h-screen min-w-0 flex-1 flex-col overflow-hidden">
+    <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden">
       {/* Header */}
       <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border px-6 py-4">
         <div className="min-w-0">

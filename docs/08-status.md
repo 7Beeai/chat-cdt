@@ -1,6 +1,8 @@
 # 8. Status
 
-> **Atualizar ao fim de cada sessão de trabalho.** Última atualização: 2026-05-27 (sessão 2 — código v1 completo, sem smoke test ainda).
+> **Atualizar ao fim de cada sessão de trabalho.** Última atualização: 2026-05-29 (sessão 3).
+>
+> **Sessão 2026-05-29** entregou: tela de admin de usuários (`/admin/users`), ciclo de atendimento (assumir/encerrar com desfecho + log de eventos, migrations 0009-0011), inbox multi-operador (abas por estado/dono + exclusividade híbrida) e dashboard de Relatórios (`/reports`, migration 0012). **Detalhes, convenções não-óbvias e pendências em [`10-sessao-2026-05-29.md`](10-sessao-2026-05-29.md).** Builds verdes; validação visual em browser ainda pendente; nada commitado.
 
 ## TL;DR
 

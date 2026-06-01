@@ -1,8 +1,12 @@
+import { redirect } from 'next/navigation'
 import { LayoutTemplate } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
 
 export default function TemplatesPage() {
+  // Tela desativada temporariamente — remover este redirect para restaurar.
+  redirect('/inbox')
+
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <header className="elegant-divider flex items-center gap-3 border-b border-border bg-card px-6 py-5">
