@@ -1,0 +1,1677 @@
+[
+  {
+    "slug": "create-admin-users",
+    "trigger_kind": "http-invoked",
+    "verify_jwt": false,
+    "purpose": "Bootstrap/seed: garante que os usuarios admin fixos (victor@7bee.com, andre@7bee.com) existam no Supabase Auth e tenham profile (vinculado a unidade 'ibirite') e role 'admin', criando o que faltar de forma idempotente usando service role.",
+    "tables": [
+      {
+        "name": "units",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "id",
+          "code"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "profiles",
+        "ops": [
+          "select",
+          "insert"
+        ],
+        "columns": [
+          "id",
+          "user_id",
+          "name",
+          "unit_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "user_roles",
+        "ops": [
+          "select",
+          "insert"
+        ],
+        "columns": [
+          "id",
+          "user_id",
+          "role"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "rpcs": [],
+    "calls": [],
+    "external_services": [
+      "supabase-auth-admin"
+    ],
+    "secrets": [
+      "SUPABASE_URL",
+      "SUPABASE_SERVICE_ROLE_KEY"
+    ],
+    "notes": "verify_jwt=false e a funcao usa SERVICE_ROLE_KEY (bypassa RLS) com senha temporaria fixa 'TempPassword123!' e emails admin hardcoded — endpoint sensivel sem autenticacao propria; idealmente deveria exigir JWT/secret. Nao ha .rpc nem fetch externo. Usa supabaseAdmin.auth.admin.getUserByEmail/createUser (API Auth Admin, nao tabela public). units e filtrada por code='ibirite'. Em profiles, o insert grava user_id/name/unit_id (id, created_at, updated_at ficam por default). CORS aberto a '*'."
+  },
+  {
+    "slug": "process-reembolso",
+    "trigger_kind": "http-invoked",
+    "verify_jwt": true,
+    "purpose": "Processa reembolso manual de um pagamento (PIX via Woovi/OpenPix ou cartão via Stripe), validando JWT e papel admin/collections_agent, chamando a API do gateway e marcando o reembolso no banco via RPC compartilhada.",
+    "tables": [
+      {
+        "name": "user_roles",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "role",
+          "user_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "pagamentos",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "id",
+          "reembolso_realizado",
+          "unit_id",
+          "correlation_id",
+          "forma_pagamento",
+          "matricula",
+          "valor"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "units",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "code"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "payment_gateway_configs",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "api_key",
+          "unit_id",
+          "platform",
+          "is_active"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "webhook_events_log",
+        "ops": [
+          "insert",
+          "select"
+        ],
+        "columns": [
+          "source",
+          "event_type",
+          "correlation_id",
+          "payload",
+          "created_at"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "rpcs": [
+      "mark_refund_by_correlation"
+    ],
+    "secrets": [
+      "SUPABASE_URL",
+      "SUPABASE_SERVICE_ROLE_KEY"
+    ],
+    "calls": [
+      "woovi/openpix (POST https://api.openpix.com.br/api/v1/charge/{correlationID}/refund)",
+      "stripe (POST https://api.stripe.com/v1/refunds)",
+      "supabase-auth (auth.getUser para validar JWT)"
+    ],
+    "external_services": [
+      "woovi/openpix",
+      "stripe",
+      "supabase-auth"
+    ],
+    "notes": "Função usa SERVICE_ROLE_KEY mas faz controle de acesso manual: exige Authorization Bearer, valida o usuário via auth.getUser e checa user_roles para papel 'admin' ou 'collections_agent' (403 caso contrário). forma_pagamento='pix' mapeia para platform='woovi'; 'stripe' mapeia para 'stripe'; outros valores retornam 'Plataforma não suportada'. Para Stripe, o correlation_id é UUID interno, então a função busca o charge_id/payment_intent real no webhook_events_log (event_type='charge.succeeded', source='stripe'). webhook_events_log.payload é jsonb e é tanto escrito (logRefundAttempt insere logs de cada etapa: refund_request/refund_response/refund_lookup_failed/refund_success) quanto lido (payload.data.object do evento Stripe). O select em pagamentos é '*, units!pagamentos_unit_id_fkey(code)' — colunas listadas são as literalmente acessadas no código; pode haver outras colunas selecionadas por '*' (inferido). A escrita real do estado do reembolso é delegada à RPC mark_refund_by_correlation (p_correlation_id, p_motivo, p_realizado_by, p_source='manual'), que faz o dual-write compartilhado com os webhooks automáticos. Sem validação de assinatura de provedor — confirma trigger http-invoked (chamada pelo app), não webhook."
+  },
+  {
+    "slug": "cancel-payment-links",
+    "trigger_kind": "http-invoked",
+    "verify_jwt": false,
+    "purpose": "Disparada por Database Webhook em UPDATE de clientes_cobranca_setembro; quando 'regua' ou 'valor_inadimplente' muda, cancela os links de pagamento ativos (PIX/Woovi via OpenPix e cartao via Stripe) daquela matricula usando as credenciais da franquia.",
+    "tables": [
+      {
+        "name": "clientes_cobranca_setembro",
+        "ops": [
+          "trigger-source"
+        ],
+        "columns": [
+          "regua",
+          "valor_inadimplente",
+          "matricula",
+          "unit_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "payment_gateway_configs",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "platform",
+          "api_key",
+          "unit_id",
+          "is_active"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "links_pagamentos_gerados",
+        "ops": [
+          "select",
+          "update"
+        ],
+        "columns": [
+          "id",
+          "correlation_id",
+          "matricula",
+          "status",
+          "cancelado_at",
+          "plataforma_pagamento_utilizada"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "rpcs": [],
+    "calls": [
+      "woovi/openpix: DELETE https://api.openpix.com.br/api/v1/charge/{correlation_id}",
+      "stripe: GET https://api.stripe.com/v1/payment_links (active=true, limit=100, paginado via starting_after)",
+      "stripe: POST https://api.stripe.com/v1/payment_links/{id} (active=false)"
+    ],
+    "secrets": [
+      "SUPABASE_URL",
+      "SUPABASE_SERVICE_ROLE_KEY"
+    ],
+    "external_services": [
+      "woovi/openpix",
+      "stripe"
+    ],
+    "notes": "trigger_kind=http-invoked: a funcao NAO e um webhook de provedor externo (verify_jwt=false). E disparada internamente por Database Webhook 'cancel-links-on-regua-valor-update' AFTER UPDATE ON clientes_cobranca_setembro (via pg_net), e ela CHAMA os provedores externos (OpenPix/Stripe). Valida payload.type==='UPDATE' com old_record e record.\n\nclientes_cobranca_setembro: tabela do n8n (clientes_cobranca_*), NAO consultada via .from(); suas colunas (regua, valor_inadimplente, matricula, unit_id) sao lidas do payload do Database Webhook (old_record/record). Comparacao de mudanca em regua e valor_inadimplente; matricula e unit_id usados como chaves.\n\nlinks_pagamentos_gerados: select filtra status='pending', cancelado_at IS NULL, matricula=, plataforma_pagamento_utilizada IN ('pix','woovi','openpix'); apos cancelar no OpenPix faz UPDATE setando cancelado_at=now() com predicate id. Stripe nao usa esta tabela: filtra payment links localmente por metadata['Matricula'/'Matrícula'].\n\nCredenciais Woovi/Stripe vem de payment_gateway_configs.api_key (por unit_id, is_active=true, platform woovi/stripe), NAO de Deno.env. Erros de provedor sao logados e nao abortam o fluxo; retorna contadores woovi_cancelled/stripe_cancelled."
+  },
+  {
+    "slug": "generate-payment-link",
+    "trigger_kind": "http-invoked",
+    "verify_jwt": false,
+    "purpose": "Gera (ou reutiliza inteligentemente) um link de pagamento PIX/Woovi ou Stripe para uma matrícula inadimplente, valida valor/régua, persiste o link e atualiza as tabelas de cobrança; chamada interna pela IA do n8n (x-api-key) ou por usuário autenticado.",
+    "tables": [
+      {
+        "name": "units",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "id",
+          "code",
+          "name"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "clientes_cobranca_setembro",
+        "ops": [
+          "select",
+          "update"
+        ],
+        "columns": [
+          "whatsapp",
+          "regua",
+          "name",
+          "valor_inadimplente",
+          "matricula",
+          "link_pagamento_enviado",
+          "link_pagamento",
+          "correlation_id",
+          "unit_id",
+          "plataforma_pagamento_utilizada",
+          "hora_link_gerado"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "pagamentos",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "id",
+          "data_pagamento",
+          "matricula",
+          "reembolso_realizado"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "links_pagamentos_gerados",
+        "ops": [
+          "select",
+          "update"
+        ],
+        "columns": [
+          "id",
+          "correlation_id",
+          "link_pagamento",
+          "created_at",
+          "data_link_gerado",
+          "expires_at",
+          "valor",
+          "regua",
+          "matricula",
+          "unit_id",
+          "plataforma_pagamento_utilizada",
+          "cancelado_at"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "clientes_cobranca_dashboard",
+        "ops": [
+          "update"
+        ],
+        "columns": [
+          "matricula",
+          "link_pagamento_enviado",
+          "link_pagamento",
+          "correlation_id",
+          "plataforma_pagamento_utilizada",
+          "hora_link_gerado"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "payment_gateway_configs",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "api_key",
+          "unit_id",
+          "platform",
+          "is_active"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "webhook_events_log",
+        "ops": [
+          "insert"
+        ],
+        "columns": [
+          "source",
+          "event_type",
+          "correlation_id",
+          "unit_code",
+          "payload",
+          "processed",
+          "error"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "rpcs": [
+      "upsert_payment_link"
+    ],
+    "secrets": [
+      "SUPABASE_URL",
+      "SUPABASE_SERVICE_ROLE_KEY",
+      "INTERNAL_API_KEY"
+    ],
+    "calls": [
+      "woovi/openpix POST https://api.openpix.com.br/api/v1/charge",
+      "stripe POST https://api.stripe.com/v1/products",
+      "stripe POST https://api.stripe.com/v1/prices",
+      "stripe POST https://api.stripe.com/v1/payment_links"
+    ],
+    "external_services": [
+      "woovi (openpix)",
+      "stripe"
+    ],
+    "notes": "verify_jwt=false; autenticação feita manualmente no código: aceita Bearer token validado via supabase.auth.getUser OU header x-api-key igual ao secret INTERNAL_API_KEY (caminho usado pela IA do n8n). Usa SUPABASE_SERVICE_ROLE_KEY (acesso total, ignora RLS). Trigger classificado como http-invoked (chamada pelo app/n8n), NÃO é webhook de provedor de pagamento. RPC upsert_payment_link recebe params: p_correlation_id, p_matricula, p_whatsapp, p_link, p_unit_id, p_plataforma, p_data_link, p_gateway_charge_id. Lógica de smart reuse: reaproveita link ativo se não expirado, valor e régua iguais; senão cancela (cancelado_at) e gera novo. Guard de 48h contra pagamento recente (HTTP 409) e guard de 30 dias para não sobrescrever correlation_id real. Tabelas clientes_cobranca_setembro, clientes_cobranca_dashboard, pagamentos e links_pagamentos_gerados são do fluxo n8n/cobrança (não pertencem ao CHAT-CDT). webhook_events_log usado só para registrar falha de criação de cobrança na Woovi (CHARGE_CREATE_FAILED). Headers de gateway (api_key Woovi/Stripe) lidos de payment_gateway_configs por unidade, não de secrets."
+  },
+  {
+    "slug": "woovi-webhook",
+    "trigger_kind": "http-webhook",
+    "verify_jwt": false,
+    "purpose": "Recebe webhooks da Woovi/OpenPix (pagamentos PIX): valida assinatura HMAC, registra cada pagamento concluído (CHARGE_COMPLETED) na conta de cobranca via RPC, trata estornos (refund), e reconcilia pagamentos cujo link nao foi encontrado (auto-resolve por telefone ou grava como orfao).",
+    "tables": [
+      {
+        "name": "webhook_events_log",
+        "ops": [
+          "insert",
+          "select",
+          "update"
+        ],
+        "columns": [
+          "id",
+          "source",
+          "event_type",
+          "correlation_id",
+          "payload",
+          "processed",
+          "error",
+          "unit_code"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "links_pagamentos_gerados",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "matricula",
+          "whatsapp",
+          "unit_id",
+          "plataforma_pagamento_utilizada",
+          "link_pagamento",
+          "correlation_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "clientes_cobranca_dashboard",
+        "ops": [
+          "select",
+          "update"
+        ],
+        "columns": [
+          "name",
+          "valor_inadimplente",
+          "regua",
+          "whatsapp",
+          "matricula",
+          "link_pagamento"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "pagamentos_orfaos",
+        "ops": [
+          "upsert"
+        ],
+        "columns": [
+          "source",
+          "gateway_correlation_id",
+          "gateway_charge_id",
+          "valor",
+          "data_pagamento",
+          "payer_name",
+          "payer_phone",
+          "payer_taxid",
+          "raw_payload"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "rpcs": [
+      "mark_refund_by_correlation",
+      "resolve_orfao_matricula",
+      "register_payment"
+    ],
+    "secrets": [
+      "SUPABASE_URL",
+      "SUPABASE_SERVICE_ROLE_KEY",
+      "WOOVI_WEBHOOK_SECRET"
+    ],
+    "external_services": [
+      "woovi",
+      "openpix"
+    ],
+    "calls": [],
+    "notes": "verify_jwt=false (endpoint publico chamado pelo gateway). Validacao de seguranca via HMAC-SHA1 (base64) no header x-openpix-signature comparado a WOOVI_WEBHOOK_SECRET; se o secret nao estiver configurado, a validacao e PULADA (aceita o webhook com warning) — fail-open. Eventos tratados: OPENPIX:CHARGE_COMPLETED (registra pagamento), OPENPIX:CHARGE_REFUNDED e OPENPIX:CHARGE_EXPIRED_REFUNDED (marca refund via mark_refund_by_correlation); demais eventos sao ignorados (marcados processed=true). Idempotencia via register_payment (retorna already_existed) e upsert onConflict 'source,gateway_correlation_id' em pagamentos_orfaos. Fluxo de orfao: se links_pagamentos_gerados nao tem o correlation_id, tenta resolve_orfao_matricula por telefone do pagador (customer.phone/payer.phone) e, se resolvido, chama register_payment com p_gateway_charge_id; senao grava em pagamentos_orfaos para reconciliacao manual/cron. unit_id nunca e hardcoded — vem de links_pagamentos_gerados ou do resolve. Quase sempre retorna HTTP 200 (mesmo em erro) para evitar reenvio em loop pela Woovi; excecoes: 400 (JSON invalido) e 401 (assinatura invalida). webhook_events_log e gravado ANTES da validacao de assinatura (defesa em profundidade). Tabelas clientes_cobranca_dashboard e links_pagamentos_gerados pertencem ao dominio de cobranca do n8n (read/update) — atencao: a function FAZ update em clientes_cobranca_dashboard.link_pagamento. Tabela 'pix' citada apenas como caminho alternativo no payload (payload.pix.charge), nao e tabela de banco."
+  },
+  {
+    "slug": "list-client-debts",
+    "trigger_kind": "http-invoked",
+    "verify_jwt": false,
+    "purpose": "Recebe whatsapp + unit_id e retorna as dívidas pendentes do telefone via RPC get_phone_pending_debts, separando as que precisam de novo link de pagamento das que já têm link ativo.",
+    "tables": [],
+    "rpcs": [
+      "get_phone_pending_debts"
+    ],
+    "calls": [
+      "supabase.auth.getUser (Supabase GoTrue Auth)"
+    ],
+    "external_services": [
+      "Supabase Auth (GoTrue)"
+    ],
+    "secrets": [
+      "SUPABASE_URL",
+      "SUPABASE_SERVICE_ROLE_KEY",
+      "INTERNAL_API_KEY"
+    ],
+    "notes": "Sem acessos diretos a tabelas (.from). Único acesso a dados é o RPC get_phone_pending_debts(p_whatsapp, p_unit_id). Auth dupla: x-api-key == INTERNAL_API_KEY (chamada interna app/n8n) OU Bearer token Supabase validado com auth.getUser(). Cliente criado com SERVICE_ROLE_KEY (bypassa RLS). Aceita params via query string, JSON body ou form-urlencoded. Campos consumidos do resultado do RPC (granularidade de coluna, origem = saída do RPC, não tabela): has_active_link, matricula, name, valor_inadimplente, regua, link_pagamento. CORS aberto (Access-Control-Allow-Origin: *). verify_jwt=false no nível da plataforma, mas a função faz checagem de auth própria no código."
+  },
+  {
+    "slug": "stripe-webhook",
+    "trigger_kind": "http-webhook",
+    "verify_jwt": false,
+    "purpose": "Recebe webhooks do Stripe (charge.succeeded, charge.refunded, charge.dispute.closed), valida a assinatura HMAC, resolve a unidade/matrícula via correlation_id e tabelas de cobrança, e registra o pagamento ou estorno (ou grava como órfão quando não consegue resolver a unidade).",
+    "external_services": [
+      "stripe"
+    ],
+    "secrets": [
+      "SUPABASE_URL",
+      "SUPABASE_SERVICE_ROLE_KEY",
+      "STRIPE_WEBHOOK_SECRET"
+    ],
+    "rpcs": [
+      "mark_refund_by_correlation",
+      "register_payment"
+    ],
+    "calls": [],
+    "tables": [
+      {
+        "name": "webhook_events_log",
+        "ops": [
+          "insert",
+          "select",
+          "update"
+        ],
+        "columns": [
+          "id",
+          "source",
+          "event_type",
+          "correlation_id",
+          "payload",
+          "processed",
+          "error",
+          "unit_code"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "pagamentos",
+        "ops": [
+          "select",
+          "update"
+        ],
+        "columns": [
+          "correlation_id",
+          "gateway_charge_id",
+          "comprovante"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "links_pagamentos_gerados",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "unit_id",
+          "whatsapp",
+          "correlation_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "clientes_cobranca_dashboard",
+        "ops": [
+          "select",
+          "update"
+        ],
+        "columns": [
+          "unit_id",
+          "name",
+          "valor_inadimplente",
+          "regua",
+          "link_pagamento",
+          "matricula"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "clientes_cobranca_setembro",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "unit_id",
+          "matricula"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "pagamentos_orfaos",
+        "ops": [
+          "upsert"
+        ],
+        "columns": [
+          "source",
+          "gateway_correlation_id",
+          "gateway_charge_id",
+          "valor",
+          "data_pagamento",
+          "payer_name",
+          "payer_phone",
+          "payer_taxid",
+          "matricula_informada",
+          "raw_payload"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "notes": "Função read-only analisada via get_edge_function (version 20). verify_jwt=false (endpoint público chamado pelo Stripe). Fluxo: (1) lê rawBody, loga em webhook_events_log ANTES de validar assinatura (defesa em profundidade), depois valida assinatura HMAC-SHA256 do header stripe-signature com tolerância de 5min. (2) charge.refunded/charge.dispute.closed -> resolve correlation_id (metadata ou lookup pagamentos.gateway_charge_id) e chama RPC mark_refund_by_correlation. (3) Apenas charge.succeeded é processado para pagamento (payment_intent.succeeded ignorado de propósito por não ter receipt_url). Resolve unit_id por links_pagamentos_gerados -> clientes_cobranca_dashboard -> clientes_cobranca_setembro; se falhar, upsert em pagamentos_orfaos. Caso ok, chama RPC register_payment e atualiza comprovante/link_pagamento. Sempre retorna 200 em erros de processamento para evitar loop de reenvio do Stripe (apenas JSON inválido=400 e assinatura inválida=401). Colunas de pagamentos_orfaos como data_pagamento usam new Date().toISOString() (não vêm do payload). receipt_url também tenta dataObj.charges.data[0].receipt_url como fallback."
+  },
+  {
+    "slug": "abacate-webhook",
+    "trigger_kind": "http-webhook",
+    "verify_jwt": false,
+    "purpose": "Recebe eventos de pagamento do Abacate Pay (valida assinatura HMAC-SHA256 base64), localiza o link de cobrança pelo externalId/correlation_id e registra o pagamento de forma idempotente via RPC register_payment, marcando o link como pago.",
+    "tables": [
+      {
+        "name": "webhook_events_log",
+        "ops": [
+          "insert",
+          "update"
+        ],
+        "columns": [
+          "source",
+          "event_type",
+          "correlation_id",
+          "payload",
+          "processed",
+          "error",
+          "unit_code",
+          "id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "links_pagamentos_gerados",
+        "ops": [
+          "select",
+          "update"
+        ],
+        "columns": [
+          "matricula",
+          "whatsapp",
+          "unit_id",
+          "plataforma_pagamento_utilizada",
+          "link_pagamento",
+          "correlation_id",
+          "status",
+          "gateway_charge_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "clientes_cobranca_dashboard",
+        "ops": [
+          "select",
+          "update"
+        ],
+        "columns": [
+          "name",
+          "valor_inadimplente",
+          "regua",
+          "matricula",
+          "link_pagamento"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "rpcs": [
+      "register_payment"
+    ],
+    "secrets": [
+      "SUPABASE_URL",
+      "SUPABASE_SERVICE_ROLE_KEY",
+      "ABACATE_WEBHOOK_SECRET"
+    ],
+    "calls": [],
+    "external_services": [
+      "abacate (Abacate Pay - gateway de pagamento PIX/cartao)"
+    ],
+    "notes": "Webhook inbound apenas (sem fetch/invoke saintes). Header de assinatura: X-Webhook-Signature; HMAC-SHA256 base64 sobre o raw body; se ABACATE_WEBHOOK_SECRET ausente, aceita unsigned com warning (TEMPORARY). Eventos pagos aceitos: checkout.completed, billing.paid, pix.paid, transparent.paid, transparent.completed, pixQrCode.paid. correlationID extraido de data.{pixQrCode|checkout|transparent|billing}.metadata.externalId com fallbacks (data.metadata.externalId, checkout.externalId, data.externalId). Fonte de verdade do valor = valorPago confirmado pelo gateway (paidAmount/amount), com fallback valor_inadimplente do dashboard. clientes_cobranca_dashboard e links_pagamentos_gerados sao tabelas do fluxo n8n/cobranca (esta funcao le e tambem ATUALIZA link_pagamento em clientes_cobranca_dashboard e status/gateway_charge_id em links_pagamentos_gerados). Update de links com status='paid' dispara Realtime no checkout em pagar.cdt.7bee.ai. Funcao espelha woovi-webhook. Colunas confirmadas pois aparecem literalmente; payload em webhook_events_log e objeto dinamico (conteudo do evento)."
+  },
+  {
+    "slug": "generate-payment-link-abacate",
+    "trigger_kind": "http-invoked",
+    "verify_jwt": false,
+    "purpose": "Gera link de pagamento Pix via Abacate Pay para uma matricula de cobranca CDT: valida unidade/cliente, reaproveita link ativo (smart-reuse cross-gateway) ou cria nova cobranca no Abacate, persiste o link e atualiza as tabelas de cobranca; retorna a URL do checkout CDT (nao o brCode bruto).",
+    "tables": [
+      {
+        "name": "units",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "id",
+          "code",
+          "name"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "clientes_cobranca_setembro",
+        "ops": [
+          "select",
+          "update"
+        ],
+        "columns": [
+          "matricula",
+          "whatsapp",
+          "regua",
+          "name",
+          "valor_inadimplente",
+          "link_pagamento_enviado",
+          "link_pagamento",
+          "correlation_id",
+          "unit_id",
+          "plataforma_pagamento_utilizada",
+          "hora_link_gerado"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "clientes_cobranca_dashboard",
+        "ops": [
+          "select",
+          "update"
+        ],
+        "columns": [
+          "matricula",
+          "pagamento_feito",
+          "link_pagamento_enviado",
+          "link_pagamento",
+          "correlation_id",
+          "plataforma_pagamento_utilizada",
+          "hora_link_gerado"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "payment_gateway_configs",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "api_key",
+          "unit_id",
+          "platform",
+          "is_active"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "links_pagamentos_gerados",
+        "ops": [
+          "select",
+          "update"
+        ],
+        "columns": [
+          "id",
+          "correlation_id",
+          "link_pagamento",
+          "data_link_gerado",
+          "expires_at",
+          "valor",
+          "regua",
+          "pix_gateway",
+          "matricula",
+          "unit_id",
+          "plataforma_pagamento_utilizada",
+          "cancelado_at",
+          "created_at",
+          "pix_copia_cola"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "webhook_events_log",
+        "ops": [
+          "insert"
+        ],
+        "columns": [
+          "source",
+          "event_type",
+          "correlation_id",
+          "unit_code",
+          "payload",
+          "processed",
+          "error"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "pagamentos",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "id",
+          "matricula",
+          "data_pagamento",
+          "reembolso_realizado"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "rpcs": [
+      "upsert_payment_link"
+    ],
+    "calls": [
+      "abacate"
+    ],
+    "external_services": [
+      "abacate"
+    ],
+    "secrets": [
+      "CHECKOUT_BASE_URL",
+      "SUPABASE_URL",
+      "SUPABASE_SERVICE_ROLE_KEY",
+      "ABACATE_ENABLED",
+      "INTERNAL_API_KEY"
+    ],
+    "notes": "Funcao dedicada a geracao de links Pix Abacate Pay (separada de generate-payment-link Woovi/Stripe). Auth dupla: header x-api-key == INTERNAL_API_KEY (chamada interna n8n) OU Bearer token validado via supabase.auth.getUser (auth interna do Supabase, nao contada como call externa). Kill switch ABACATE_ENABLED=true exigido senao retorna 503. Chama POST https://api.abacatepay.com/v1/pixQrCode/create com Bearer api_key resolvida em payment_gateway_configs (platform=abacate, is_active). Persist fail retorna 502 (nao 207) para n8n nao disparar WhatsApp com link orfao. trigger_kind=http-invoked: a funcao CRIA cobranca no Abacate, nao recebe callback de pagamento (nao e webhook). brCode persistido em links_pagamentos_gerados.pix_copia_cola; paymentLink retornado e a URL do checkout CDT (CHECKOUT_BASE_URL/pay/<correlation_id>). Todas as colunas sao nomeadas literalmente (sem select('*')) => confidence confirmado em todas as 7 tabelas. Falhas registradas em webhook_events_log (CHARGE_CREATE_FAILED / UPSERT_PAYMENT_LINK_FAILED)."
+  },
+  {
+    "slug": "process-payouts",
+    "trigger_kind": "cron",
+    "purpose": "Cron diario (chamado pelo n8n via x-api-key=INTERNAL_API_KEY) que, para cada unidade com gateway Abacate ativo e payout habilitado, atualiza o status dos payouts PENDING e cria saques PIX automaticos do saldo disponivel, registrando tudo na tabela payouts.",
+    "verify_jwt": true,
+    "tables": [
+      {
+        "name": "payouts",
+        "ops": [
+          "select",
+          "insert",
+          "update"
+        ],
+        "columns": [
+          "id",
+          "external_id",
+          "unit_id",
+          "status",
+          "platform",
+          "abacate_id",
+          "platform_fee_cents",
+          "receipt_url",
+          "raw_response",
+          "updated_at",
+          "completed_at",
+          "amount_cents",
+          "pix_key",
+          "pix_key_type",
+          "raw_request",
+          "error_message"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "payment_gateway_configs",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "unit_id",
+          "api_key",
+          "platform",
+          "is_active",
+          "payout_enabled",
+          "payout_pix_key",
+          "payout_pix_key_type"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "webhook_events_log",
+        "ops": [
+          "insert"
+        ],
+        "columns": [
+          "source",
+          "event_type",
+          "correlation_id",
+          "unit_code",
+          "payload",
+          "processed",
+          "error"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "units",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "code",
+          "name"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "rpcs": [
+      "link_payout_charges"
+    ],
+    "secrets": [
+      "SUPABASE_URL",
+      "SUPABASE_SERVICE_ROLE_KEY",
+      "PAYOUTS_ENABLED",
+      "INTERNAL_API_KEY"
+    ],
+    "calls": [
+      "abacate: GET https://api.abacatepay.com/v2/payouts/get (refresh status do payout por externalId)",
+      "abacate: GET https://api.abacatepay.com/v2/store/get (leitura de saldo/balance da loja)",
+      "abacate: POST https://api.abacatepay.com/v2/payouts/create (criacao do saque PIX)"
+    ],
+    "external_services": [
+      "abacate (AbacatePay) - gateway de pagamento/PIX payout"
+    ],
+    "notes": "Auth dupla: kill switch PAYOUTS_ENABLED=true obrigatorio (senao 503) + header x-api-key === INTERNAL_API_KEY (senao 401). verify_jwt=true no deploy, mas a autorizacao real e via x-api-key interno (n8n cron). Tabela units e lida via embedded join PostgREST (units:unit_id(code, name)) nos selects de payouts e payment_gateway_configs. A coluna api_key de payment_gateway_configs e usada como Bearer token nas chamadas Abacate (nao e um Deno.env secret). RPC link_payout_charges(p_payout_id) e chamada quando um payout vira COMPLETE para popular payout_pagamentos (tabela manipulada dentro da RPC, nao diretamente no codigo). Idempotencia garantida por externalId=crypto.randomUUID() + UNIQUE no banco; insert do payout PENDING ocorre ANTES do POST e e marcado FAILED se o POST falhar. Rate limit Abacate 1 payout/min (sleep 65s entre criacoes)."
+  },
+  {
+    "slug": "agent-tools",
+    "trigger_kind": "http-invoked",
+    "purpose": "Executor de tools do agent OpenAI (Rafa) no n8n: aplica block/pause via RPCs SECURITY DEFINER e transfere conversa para atendente humano (transfer_human) ou consulta gate ai_may_send, mexendo em contacts/conversations do CHAT-CDT.",
+    "verify_jwt": false,
+    "tables": [
+      {
+        "name": "contacts",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "id",
+          "unit_id",
+          "wa_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "conversations",
+        "ops": [
+          "select",
+          "update"
+        ],
+        "columns": [
+          "id",
+          "routing",
+          "handoff_reason",
+          "contact_id",
+          "status"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "rpcs": [
+      "agent_block_customer",
+      "agent_pause_customer"
+    ],
+    "calls": [],
+    "external_services": [],
+    "secrets": [
+      "AGENT_TOOLS_SECRET",
+      "SUPABASE_URL",
+      "SUPABASE_SERVICE_ROLE_KEY"
+    ],
+    "notes": "Endpoint POST JSON com 4 actions: block (motivo em cancelamento/xingamento/ameaca_legal/ja_pagou → RPC agent_block_customer), pause (pausa_motivo em promessa_data/ja_pagou_48h → RPC agent_pause_customer), transfer_human (chave unit_id+wa_id → busca contacts.id e seta conversations.routing='queued', handoff_reason=reason em conversa status='open'), ai_may_send (gate lido pelo n8n: retorna false se há conversa open com routing in queued/human). Auth via header custom x-agent-tools-secret (compara com AGENT_TOOLS_SECRET); verify_jwt=false. Usa SERVICE_ROLE_KEY (bypassa RLS). Trata 9º dígito BR gerando variantes de wa_id (waIdCandidates). Erro RPC code '02000' mapeado para 404. Nenhuma chamada fetch/invoke externa nem a outras edge functions. Cliente supabase-js criado mas auth real é só o header secreto."
+  },
+  {
+    "slug": "notify-orphan-email",
+    "trigger_kind": "http-invoked",
+    "verify_jwt": false,
+    "purpose": "Recebe um pagamento órfão recém-criado em pagamentos_orfaos e dispara email de alerta via SMTP/nodemailer para ORPHAN_NOTIFY_TO, com modo agregado (anti-spam) quando há burst de órfãos da mesma source na última hora.",
+    "tables": [
+      {
+        "name": "pagamentos_orfaos",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "id",
+          "source",
+          "created_at"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "webhook_events_log",
+        "ops": [
+          "select",
+          "insert"
+        ],
+        "columns": [
+          "id",
+          "source",
+          "event_type",
+          "correlation_id",
+          "payload",
+          "processed",
+          "error",
+          "created_at"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "rpcs": [],
+    "secrets": [
+      "SMTP_HOST",
+      "SMTP_PORT",
+      "SMTP_USER",
+      "SMTP_PASSWORD",
+      "SMTP_FROM",
+      "ORPHAN_NOTIFY_TO",
+      "NOTIFY_ORPHAN_INTERNAL_KEY",
+      "SUPABASE_URL",
+      "SUPABASE_SERVICE_ROLE_KEY"
+    ],
+    "calls": [],
+    "external_services": [
+      "smtp-gmail"
+    ],
+    "notes": "Auth interna via header x-internal-key == NOTIFY_ORPHAN_INTERNAL_KEY (retorna 401 se não bater). Disparada por trigger AFTER INSERT em pagamentos_orfaos via pg_net (migration separada), por isso http-invoked e não webhook de provedor externo. Usa createClient com SUPABASE_SERVICE_ROLE_KEY (acesso full, sem RLS). Envio de email por nodemailer@6.9.16 (npm:) sobre SMTP (secure=true se porta 465, senão STARTTLS); host/porta/credenciais vêm dos secrets SMTP_*. Lógica anti-spam: BURST_THRESHOLD=5 órfãos em BURST_WINDOW_MIN=60min vira modo burst; debounce de BURST_DEBOUNCE_MIN=60min checando webhook_events_log (event_type=burst_alert_<source>). Em pagamentos_orfaos o SELECT usa head:true count exact sobre coluna id com filtros .eq('source') e .gte('created_at'). Em webhook_events_log faz INSERTs com event_types: sent, burst_alert_<source>, burst_skipped, send_failed. Nenhum RPC nem chamada a outras edge functions/URLs externas além do SMTP. Coluna created_at em pagamentos_orfaos e webhook_events_log é confirmada (usada em .gte)."
+  },
+  {
+    "slug": "reconcile-abacate-pull",
+    "trigger_kind": "cron",
+    "verify_jwt": false,
+    "purpose": "Cron diário de reconciliação Abacate: itera links de pagamento Abacate sem pagamento criados nas últimas N horas e consulta cada cobrança via /v1/pixQrCode/check; quando PAID, registra o pagamento via RPC register_payment para cobrir o gap de webhooks que nunca chegaram.",
+    "tables": [
+      {
+        "name": "payment_gateway_configs",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "unit_id",
+          "api_key",
+          "platform",
+          "is_active"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "links_pagamentos_gerados",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "correlation_id",
+          "matricula",
+          "unit_id",
+          "gateway_charge_id",
+          "whatsapp",
+          "plataforma_pagamento_utilizada",
+          "created_at"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "pagamentos",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "id",
+          "correlation_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "clientes_cobranca_dashboard",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "name",
+          "valor_inadimplente",
+          "regua",
+          "whatsapp",
+          "matricula"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "webhook_events_log",
+        "ops": [
+          "insert"
+        ],
+        "columns": [
+          "source",
+          "event_type",
+          "correlation_id",
+          "payload",
+          "processed"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "rpcs": [
+      "register_payment"
+    ],
+    "secrets": [
+      "NOTIFY_ORPHAN_INTERNAL_KEY",
+      "SUPABASE_URL",
+      "SUPABASE_SERVICE_ROLE_KEY"
+    ],
+    "calls": [
+      "abacate: GET https://api.abacatepay.com/v1/pixQrCode/check?id=<gateway_charge_id>"
+    ],
+    "external_services": [
+      "abacate (AbacatePay PIX gateway)"
+    ],
+    "notes": "Autenticação por header x-internal-key comparado a Deno.env NOTIFY_ORPHAN_INTERNAL_KEY (não JWT; verify_jwt=false). Query params: hours_back (default 48) e dry_run=1 (modo simulação, não chama register_payment). Usa cliente Supabase com SERVICE_ROLE_KEY (ignora RLS). Para cada link Abacate sem pagamento na janela: checa existência em pagamentos por correlation_id; se ausente consulta a API Abacate; se status PAID, busca dados do cliente em clientes_cobranca_dashboard e chama RPC register_payment com p_correlation_id, p_matricula, p_name, p_whatsapp, p_valor, p_data_pagamento, p_regua, p_forma='pix', p_comprovante=null, p_unit_id, p_gateway_charge_id. Pula configs com api_key vazia ou com menos de 20 caracteres. Sempre grava um sumário de execução em webhook_events_log (source='abacate_pull_reconciliation'). register_payment é a única operação de escrita real em dados de cobrança; demais escritas são apenas o log. Tabelas pagamentos, links_pagamentos_gerados, clientes_cobranca_dashboard e payment_gateway_configs pertencem ao ecossistema de cobrança/n8n (read-mostly aqui, exceto via RPC)."
+  },
+  {
+    "slug": "reconcile-stripe-pull",
+    "trigger_kind": "cron",
+    "purpose": "Cron diário de reconciliação que lista charges Stripe com status='succeeded'/paid das últimas N horas (default 48) e ingere as ausentes em pagamentos: tenta auto-resolver matrícula+unidade e registrar o pagamento, ou salva como órfão (disparando email) quando não resolve, cobrindo o gap de webhooks Stripe que nunca chegaram.",
+    "verify_jwt": false,
+    "tables": [
+      {
+        "name": "payment_gateway_configs",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "unit_id",
+          "api_key",
+          "platform",
+          "is_active"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "pagamentos",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "id",
+          "correlation_id",
+          "gateway_charge_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "clientes_cobranca_dashboard",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "matricula",
+          "unit_id",
+          "name",
+          "valor_inadimplente",
+          "regua",
+          "whatsapp"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "pagamentos_orfaos",
+        "ops": [
+          "upsert"
+        ],
+        "columns": [
+          "source",
+          "gateway_correlation_id",
+          "gateway_charge_id",
+          "valor",
+          "data_pagamento",
+          "payer_name",
+          "payer_phone",
+          "payer_taxid",
+          "matricula_informada",
+          "raw_payload"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "webhook_events_log",
+        "ops": [
+          "insert"
+        ],
+        "columns": [
+          "source",
+          "event_type",
+          "correlation_id",
+          "payload",
+          "processed"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "rpcs": [
+      "resolve_orfao_matricula",
+      "register_payment"
+    ],
+    "calls": [
+      "stripe: GET https://api.stripe.com/v1/charges (lista paginada de charges)"
+    ],
+    "secrets": [
+      "NOTIFY_ORPHAN_INTERNAL_KEY",
+      "SUPABASE_URL",
+      "SUPABASE_SERVICE_ROLE_KEY"
+    ],
+    "external_services": [
+      "stripe"
+    ],
+    "notes": "Autenticação: exige header x-internal-key == NOTIFY_ORPHAN_INTERNAL_KEY (401 caso contrário), apesar de verify_jwt=false. Parâmetros de query: hours_back (default 48) e dry_run=1 (não escreve, só contabiliza órfãos). Usa createClient com SERVICE_ROLE_KEY (bypass RLS). Itera por cada unit em payment_gateway_configs (platform=stripe, is_active=true); pula configs com api_key vazia/curta (<20 chars). Lê api_key da Stripe (sk_live/sk_test) do banco e a usa via Basic auth na Stripe API; paginação com starting_after, hard cap 5000 charges. Dedup por correlation_id (metadata) ou gateway_charge_id (ch_xxx). Resolve matrícula via metadata['Matrícula']/matricula ou RPC resolve_orfao_matricula(p_correlation_id, p_payer_phone); registra via register_payment(p_correlation_id, p_matricula, p_name, p_whatsapp, p_valor, p_data_pagamento, p_regua, p_forma='stripe', p_comprovante, p_unit_id, p_gateway_charge_id). Não resolvido vira órfão (upsert onConflict source,gateway_correlation_id). clientes_cobranca_dashboard é tabela do n8n e aqui é apenas LIDA (read-only). Ao final grava resumo em webhook_events_log. Análise READ-ONLY: apenas get_edge_function utilizado."
+  },
+  {
+    "slug": "reconcile-woovi-pull",
+    "trigger_kind": "cron",
+    "purpose": "Cron diário de reconciliação por pulling: lista charges COMPLETED da Woovi nas últimas N horas e ingere as ausentes em pagamentos, auto-resolvendo via register_payment ou salvando como órfão, cobrindo o cenário de webhook que nunca chegou.",
+    "verify_jwt": false,
+    "tables": [
+      {
+        "name": "payment_gateway_configs",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "unit_id",
+          "api_key",
+          "platform",
+          "is_active"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "pagamentos",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "id",
+          "correlation_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "clientes_cobranca_dashboard",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "name",
+          "valor_inadimplente",
+          "regua",
+          "whatsapp",
+          "matricula"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "pagamentos_orfaos",
+        "ops": [
+          "upsert"
+        ],
+        "columns": [
+          "source",
+          "gateway_correlation_id",
+          "gateway_charge_id",
+          "valor",
+          "data_pagamento",
+          "payer_name",
+          "payer_phone",
+          "payer_taxid",
+          "raw_payload"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "webhook_events_log",
+        "ops": [
+          "insert"
+        ],
+        "columns": [
+          "source",
+          "event_type",
+          "correlation_id",
+          "payload",
+          "processed"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "rpcs": [
+      "resolve_orfao_matricula",
+      "register_payment"
+    ],
+    "secrets": [
+      "NOTIFY_ORPHAN_INTERNAL_KEY",
+      "SUPABASE_URL",
+      "SUPABASE_SERVICE_ROLE_KEY"
+    ],
+    "calls": [
+      "woovi (GET https://api.openpix.com.br/api/v1/charge?status=COMPLETED — lista charges pagas paginadas)"
+    ],
+    "external_services": [
+      "woovi/openpix"
+    ],
+    "notes": "Trigger é cron (reconciliação diária por pulling) mas exige header x-internal-key === NOTIFY_ORPHAN_INTERNAL_KEY; verify_jwt=false. Suporta query params hours_back (default 48) e dry_run=1. Pagina Woovi de 100 em 100 com hard cap de 5000 (skip). Guard: pula configs com api_key vazia ou len<20 (marca skipped, sem contar erro). Para cada charge: SELECT em pagamentos por correlation_id (maybeSingle); se ausente, chama rpc resolve_orfao_matricula(p_correlation_id, p_payer_phone); se resolveResult.ok+matricula+unit_id, faz SELECT em clientes_cobranca_dashboard por matricula e chama rpc register_payment(p_correlation_id, p_matricula, p_name, p_whatsapp, p_valor, p_data_pagamento, p_regua, p_forma='pix', p_comprovante=null, p_unit_id, p_gateway_charge_id); caso contrário upsert em pagamentos_orfaos (onConflict source,gateway_correlation_id). Em dry_run não escreve nada (conta como órfão hipotético). Loga resumo final em webhook_events_log. Todas as escritas usam SERVICE_ROLE_KEY (bypassa RLS). register_payment e resolve_orfao_matricula são RPCs do fluxo de cobrança do n8n (não tabelas do CHAT-CDT)."
+  },
+  {
+    "slug": "sentinel-generate-variation",
+    "trigger_kind": "http-invoked",
+    "verify_jwt": false,
+    "purpose": "Agente stateless que reescreve templates WhatsApp recategorizados pela Meta como MARKETING (ou rejeitados/pausados/quality RED): Sonnet gera a variacao UTILITY e Opus revisa num loop de ate max_iterations, retornando a versao final + historico; nao toca DB nem chama a Meta para escrever.",
+    "tables": [],
+    "rpcs": [],
+    "calls": [
+      "anthropic:POST https://api.anthropic.com/v1/messages (Sonnet gera variacao + Opus revisa)",
+      "graph-meta:GET https://graph.facebook.com/v22.0/{waba_id}/message_templates?fields=name,components&name={template_name} (fallback para buscar body_text do template quando nao vem no input)"
+    ],
+    "secrets": [
+      "ANTHROPIC_API_KEY",
+      "SENTINEL_SONNET_MODEL",
+      "SENTINEL_OPUS_MODEL",
+      "META_GRAPH_TOKEN",
+      "META_TOKEN"
+    ],
+    "external_services": [
+      "anthropic",
+      "graph-meta"
+    ],
+    "notes": "Funcao 100% stateless: nao usa cliente Supabase, nao executa nenhuma query/insert/update/delete nem .rpc() — comentario do cabecalho confirma \"Stateless. Nao toca DB. Nao chama Meta\" (esta ultima afirmacao e imprecisa: ha um fallback GET de leitura na Meta Graph API quando body_text nao e fornecido, mas nunca escreve na Meta). Entrada POST JSON: template_name, waba_id (ambos obrigatorios), body_text, paused_reason, category_current, quality_current, max_iterations (clamp 1..3, default 2). Secrets ANTHROPIC_API_KEY obrigatoria (503 se ausente); META_GRAPH_TOKEN/META_TOKEN so necessarios no caminho de fallback (400 se body_text ausente e token ausente). SENTINEL_SONNET_MODEL/SENTINEL_OPUS_MODEL tem defaults ('claude-sonnet-4-6' / 'claude-opus-4-7'). CORS aberto (Access-Control-Allow-Origin: *). verify_jwt=false confirmado nos metadados da function. Nenhuma tabela ou coluna do banco e referenciada em lugar nenhum do codigo."
+  },
+  {
+    "slug": "sentinel-submit-template",
+    "trigger_kind": "http-invoked",
+    "verify_jwt": false,
+    "purpose": "Submete uma variacao de template de mensagem WhatsApp a Meta Graph API (POST .../message_templates), auto-injetando exemplos (example.body_text/header_text) quando o componente tem variaveis {{N}} sem amostras. Stateless, nao toca banco.",
+    "tables": [],
+    "rpcs": [],
+    "calls": [
+      "graph-meta: POST https://graph.facebook.com/v22.0/{waba_id}/message_templates (criar template de mensagem WhatsApp)"
+    ],
+    "secrets": [
+      "META_GRAPH_TOKEN",
+      "META_TOKEN"
+    ],
+    "external_services": [
+      "graph-meta (Meta/Facebook Graph API v22.0 - WhatsApp Cloud API message templates)"
+    ],
+    "notes": "Funcao stateless: nao usa cliente Supabase, nao executa .from()/.rpc(), nao toca nenhuma tabela nem RPC. Input POST JSON: {waba_id, name, language(default pt_BR), category(default UTILITY), components[]}. CORS Allow-Origin '*'. verify_jwt=false confirmado nos metadados. Token lido de META_GRAPH_TOKEN com fallback para META_TOKEN. So faz fetch para a Meta Graph API; nenhuma outra edge function e invocada. trigger_kind=http-invoked: endpoint POST chamado pelo app/n8n (nao e webhook de provedor de pagamento nem cron). Retorna meta_template_id, meta_status, meta_category e raw em caso de sucesso; em erro retorna stage='meta_create' com status/error/raw."
+  },
+  {
+    "slug": "motor-v2-planejador",
+    "trigger_kind": "cron",
+    "verify_jwt": false,
+    "purpose": "Planejador diário de cobrança (Motor v2): às 08:50 BRT sincroniza cliente_cadencia com clientes_cobranca_setembro, aplica gate de réguas (pausa/retoma), e pré-popula disparos_log com mensagens PROGRAMADA nos slots do dia por unidade.",
+    "tables": [
+      {
+        "name": "clientes_cobranca_setembro",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "matricula",
+          "whatsapp",
+          "name",
+          "regua",
+          "pagamento_feito",
+          "bloqueio_disparos",
+          "unit_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "cliente_cadencia",
+        "ops": [
+          "select",
+          "insert",
+          "update"
+        ],
+        "columns": [
+          "id",
+          "matricula",
+          "unit_id",
+          "telefone",
+          "nome",
+          "regua",
+          "dia_ciclo",
+          "ciclo_numero",
+          "entrou_em",
+          "status",
+          "pago_at",
+          "paused_at",
+          "paused_reason"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "gate_state",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "unit_id",
+          "health_color_efetivo",
+          "reguas_efetivas",
+          "relacionamento_ratio"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "system_state",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "key",
+          "value"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "gate_config",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "reguas_ativas",
+          "relacionamento_ratio",
+          "health_color"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "disparadores_whatsapp",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "numero_telefone",
+          "ativo",
+          "unit_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "units",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "name"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "cadence_calendar",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "regua",
+          "dia_ciclo",
+          "slot_index",
+          "action_type",
+          "intensity",
+          "template_pool_tag"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "disparos_log",
+        "ops": [
+          "select",
+          "insert",
+          "delete"
+        ],
+        "columns": [
+          "id",
+          "unit_id",
+          "cliente_cadencia_id",
+          "cliente_source",
+          "matricula",
+          "telefone",
+          "nome",
+          "trilho",
+          "regua",
+          "dia_ciclo",
+          "slot_index",
+          "action_type",
+          "intensity",
+          "template_pool_tag",
+          "phone_number_id",
+          "health_color_no_envio",
+          "status",
+          "scheduled_for",
+          "correlation_id"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "rpcs": [
+      "log_event"
+    ],
+    "calls": [],
+    "secrets": [
+      "SUPABASE_PROJECT_REF",
+      "SUPABASE_URL",
+      "SUPABASE_SERVICE_ROLE_KEY",
+      "MOTOR_V2_API_KEY"
+    ],
+    "external_services": [],
+    "notes": "verify_jwt=false; auth própria via header x-api-key OU Authorization: Bearer comparado a MOTOR_V2_API_KEY (ou ao SUPABASE_SERVICE_ROLE_KEY). Cliente Supabase criado com service_role (bypassa RLS). Disparado por pg_cron+pg_net às 08:50 BRT seg-sex, mas também é http-invocável manualmente com body {unit_id, mode, target_date} (modos: live/smoke/replay) — por isso trigger_kind=cron como uso primário. Kill switch via system_state.key='motor_v2_enabled'; cap de réguas via system_state.key='motor_v2_reguas_override'. A join units é via embed PostgREST 'units:units(name)' a partir de disparadores_whatsapp. Em modo 'replay' faz DELETE das disparos_log PROGRAMADA do dia/unidade antes do re-INSERT. NÃO faz nenhuma chamada fetch/invoke externa nem a outras edge functions. As tabelas clientes_cobranca_setembro e disparadores_whatsapp pertencem ao ecossistema n8n (somente leitura aqui)."
+  },
+  {
+    "slug": "motor-v2-sortear-relacionamento",
+    "trigger_kind": "cron",
+    "verify_jwt": false,
+    "purpose": "Sorteia diariamente (11:45 BRT, seg-sex, via pg_cron+pg_net) N clientes adimplentes elegiveis por unidade e cria disparos PROGRAMADOS de RELACIONAMENTO para 12:00 BRT, onde N = round(relacionamento_ratio do gate x inadimplentes unicos contactados no slot 1 do dia), aplicando cooldown de 7 dias.",
+    "tables": [
+      {
+        "name": "system_state",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "key",
+          "value"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "disparadores_whatsapp",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "numero_telefone",
+          "ativo",
+          "unit_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "units",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "name"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "gate_state",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "relacionamento_ratio",
+          "health_color_efetivo",
+          "unit_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "disparos_log",
+        "ops": [
+          "select",
+          "count",
+          "insert",
+          "delete"
+        ],
+        "columns": [
+          "id",
+          "matricula",
+          "unit_id",
+          "trilho",
+          "cliente_source",
+          "slot_index",
+          "status",
+          "scheduled_for",
+          "cliente_cadencia_id",
+          "telefone",
+          "nome",
+          "regua",
+          "dia_ciclo",
+          "action_type",
+          "intensity",
+          "template_pool_tag",
+          "phone_number_id",
+          "health_color_no_envio",
+          "correlation_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "adimplentes_base",
+        "ops": [
+          "select",
+          "update"
+        ],
+        "columns": [
+          "id",
+          "matricula",
+          "telefone",
+          "nome",
+          "unit_id",
+          "bi_atual",
+          "last_relacionamento_at",
+          "updated_at"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "rpcs": [
+      "log_event",
+      "motor_v2_count_contactados_slot1",
+      "motor_v2_sortear_adimplentes"
+    ],
+    "secrets": [
+      "SUPABASE_URL",
+      "SUPABASE_SERVICE_ROLE_KEY",
+      "MOTOR_V2_API_KEY",
+      "SUPABASE_PROJECT_REF"
+    ],
+    "calls": [],
+    "external_services": [],
+    "notes": "Tabelas/colunas do dominio \"motor v2\" do n8n (NAO sao tabelas do CHAT-CDT). Auth manual via header x-api-key OU Authorization: Bearer comparado a MOTOR_V2_API_KEY (ou bearer == SUPABASE_SERVICE_ROLE_KEY); verify_jwt=false. Modos: 'live' (idempotente, pula se ja ha RELACIONAMENTO hoje) e 'replay' (apaga PROGRAMADAS de RELACIONAMENTO do dia e refaz). Possui fallbacks REST quando as RPCs motor_v2_count_contactados_slot1 e motor_v2_sortear_adimplentes nao existem: count+DISTINCT client-side em disparos_log e Fisher-Yates shuffle sobre adimplentes_base. Inserts e updates em batches de 500. Nenhuma chamada fetch/invoke a outras edge functions nem a APIs externas (apenas client supabase-js com service role). SUPABASE_PROJECT_REF e usado so para montar a URL do dashboard no log_event. Embedded join units:units(name) na leitura de disparadores_whatsapp quando unit_id nao e informado no body."
+  },
+  {
+    "slug": "motor-v2-fechamento",
+    "trigger_kind": "cron",
+    "verify_jwt": false,
+    "purpose": "Rotina de fechamento diario (cron 23:00 BRT seg-sex) do motor de cobranca v2: reconcilia pagamentos noturnos, avanca o dia_ciclo da cadencia de cada cliente (+1) e finaliza clientes que passaram do dia 21 enviando-os a fila humana, por unidade.",
+    "tables": [
+      {
+        "name": "system_state",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "key",
+          "value"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "disparadores_whatsapp",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "unit_id",
+          "ativo"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "units",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "name"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "clientes_cobranca_setembro",
+        "ops": [
+          "select"
+        ],
+        "columns": [
+          "matricula",
+          "unit_id",
+          "pagamento_feito"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "name": "cliente_cadencia",
+        "ops": [
+          "update",
+          "select"
+        ],
+        "columns": [
+          "status",
+          "pago_at",
+          "updated_at",
+          "unit_id",
+          "matricula",
+          "id"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "rpcs": [
+      "log_event",
+      "motor_v2_reconcile_pagamentos_unit",
+      "motor_v2_avancar_dia",
+      "motor_v2_finalizar_dia22"
+    ],
+    "calls": [],
+    "external_services": [],
+    "secrets": [
+      "SUPABASE_PROJECT_REF",
+      "SUPABASE_URL",
+      "SUPABASE_SERVICE_ROLE_KEY",
+      "MOTOR_V2_API_KEY"
+    ],
+    "notes": "Autenticacao propria via header x-api-key OU Authorization: Bearer == MOTOR_V2_API_KEY (ou bearer == SUPABASE_SERVICE_ROLE_KEY); verify_jwt=false. Disparada por pg_cron+pg_net as 23:00 BRT seg-sex, mas tambem invocavel via HTTP com a api-key e aceita body opcional {unit_id, target_date}. Toca tabelas do n8n/fluxo de cobranca (clientes_cobranca_setembro com update indireto via reconcile, disparadores_whatsapp leitura). A RPC motor_v2_reconcile_pagamentos_unit pode nao existir: ha fallback manual que faz UPDATE direto em cliente_cadencia (status=PAGO) a partir de matriculas com pagamento_feito=true em clientes_cobranca_setembro, filtrando status IN (ACTIVE, PAUSED_REGUA_MORTA). RPC motor_v2_avancar_dia(p_target_date,p_unit_id) e motor_v2_finalizar_dia22(p_target_date,p_unit_id) retornam contadores. Nenhuma chamada fetch/invoke a servicos externos ou outras edge functions; toda integracao externa e via Supabase. Tabela units acessada por join embarcado units:units(name) dentro do select de disparadores_whatsapp. Gravacoes de auditoria via RPC log_event (actor SYSTEM edge:motor-v2-fechamento). Idempotencia delegada as RPCs (last_advance_date)."
+  }
+]

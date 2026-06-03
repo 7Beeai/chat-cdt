@@ -1,0 +1,299 @@
+[
+  {
+    "workflow": "CDT Cobrança - Tatuapé-SP",
+    "trigger": "rabbitmqTrigger",
+    "schedule": null,
+    "purpose": "Atendimento de cobrança via IA para a unidade Tatuapé-SP: consome mensagens WhatsApp da fila RabbitMQ \"tatuape\" (repassadas via webhook Meta), trata por tipo (texto/áudio/imagem/botão/documento), faz buffer no Redis, busca o devedor e o prompt no Supabase, roda um AI Agent (LLM OpenAI) que cobra a dívida, gera links de pagamento (PIX/cartão), pode pausar/bloquear disparos ou transferir para atendimento humano (CHAT-CDT), e envia a resposta de volta pela Graph API da Meta, registrando o outbound no banco.",
+    "reads": [
+      {
+        "table": "clientes_cobranca_setembro",
+        "columns": [
+          "whatsapp"
+        ],
+        "via": "supabase getAll node 'Get many rows' (filter whatsapp eq)",
+        "confidence": "confirmado"
+      },
+      {
+        "table": "clientes_cobranca_setembro",
+        "columns": [
+          "matricula",
+          "name",
+          "valor_inadimplente",
+          "unit_id",
+          "cadence_ultimo_template",
+          "respondeu",
+          "data_ultima_mensagem_temp"
+        ],
+        "via": "consumido downstream via $('Merge')/$('Get many rows')/Render Prompt SS a partir do getAll 'Get many rows'",
+        "confidence": "inferido"
+      },
+      {
+        "table": "agents",
+        "columns": [
+          "name",
+          "prompt"
+        ],
+        "via": "supabase getAll node 'Buscar Prompt Padrão (PIX)' (filter name eq 'rafa_tt'); coluna prompt lida em Render Prompt SS",
+        "confidence": "confirmado"
+      },
+      {
+        "table": "template_inventory",
+        "columns": [
+          "template_name",
+          "body_text"
+        ],
+        "via": "supabase getAll node 'Buscar Template Recebido' (filter template_name eq); body_text lido em Render Prompt SS",
+        "confidence": "confirmado"
+      },
+      {
+        "table": "n8n_cobranca_histories",
+        "columns": [
+          "session_id"
+        ],
+        "via": "langchain memoryPostgresChat 'Postgres Chat Memory1' (credencial 'Postgres Local', NAO Supabase; sessionKey customKey, contextWindowLength 30) — le historico de chat",
+        "confidence": "inferido"
+      }
+    ],
+    "writes": [
+      {
+        "table": "clientes_cobranca_setembro",
+        "columns": [
+          "matricula",
+          "cadence_branch_state",
+          "last_inbound_at",
+          "resgate_at"
+        ],
+        "op": "update",
+        "via": "httpRequest PATCH 'Marcar Em Conversa' (/rest/v1/clientes_cobranca_setembro?matricula=eq..., jsonBody seta cadence_branch_state='em_conversa_ia', last_inbound_at, resgate_at=null)",
+        "confidence": "confirmado"
+      },
+      {
+        "table": "clientes_cobranca_setembro",
+        "columns": [
+          "whatsapp",
+          "data_ultima_mensagem_temp",
+          "respondeu"
+        ],
+        "op": "update",
+        "via": "supabase update node 'Update a row' (filter whatsapp eq; seta data_ultima_mensagem_temp=now, respondeu=true). Executa mesmo com HTTP Request1 upstream disabled (passthrough)",
+        "confidence": "confirmado"
+      },
+      {
+        "table": "clientes_cobranca_dashboard",
+        "columns": [
+          "whatsapp",
+          "data_ultima_mensagem_temp",
+          "respondeu"
+        ],
+        "op": "update",
+        "via": "supabase update node 'Update a row1' (filter whatsapp eq; seta data_ultima_mensagem_temp=now, respondeu=true). Tabela n8n-owned por CLAUDE.md",
+        "confidence": "confirmado"
+      },
+      {
+        "table": "n8n_cobranca_histories",
+        "columns": [
+          "session_id",
+          "message"
+        ],
+        "op": "insert",
+        "via": "langchain memoryPostgresChat 'Postgres Chat Memory1' (credencial 'Postgres Local', NAO Supabase) — anexa turnos da conversa",
+        "confidence": "inferido"
+      }
+    ],
+    "rpcs": [
+      "public.chat_record_outbound_message"
+    ],
+    "edge_called": [
+      "https://ubwcxktaruxqacxltovq.supabase.co/functions/v1/generate-payment-link",
+      "https://ubwcxktaruxqacxltovq.supabase.co/functions/v1/generate-payment-link-abacate",
+      "https://ubwcxktaruxqacxltovq.supabase.co/functions/v1/list-client-debts",
+      "https://ubwcxktaruxqacxltovq.supabase.co/functions/v1/agent-tools"
+    ],
+    "external": [
+      "RabbitMQ (queue 'tatuape', parallelMessages 20)",
+      "Redis (buffer de mensagens por clientId — push/get/delete)",
+      "OpenAI (gpt-4.1-mini agent, gpt-4o-mini visao 'descrever imagem', whisper-1 transcricao de audio)",
+      "Meta Graph API graph.facebook.com v23.0 (download de midia + envio de mensagens WhatsApp; bearer token hardcoded)",
+      "Postgres Local (credencial 'Postgres Local' id QUOJJf1HRPAkjqwu — chat memory, separado do Supabase)",
+      "https://api.cpt-ibirite.7bee.top/webhook/resgate30min (HTTP Request1, DESABILITADO)"
+    ],
+    "notes": "DOIS backends Postgres distintos — nao confundir: (a) 'Postgres Chat Memory1' usa credencial 'Postgres Local' (id QUOJJf1HRPAkjqwu) gravando n8n_cobranca_histories num Postgres LOCAL, NAO no Supabase; (b) 'registrar_outbound_chat' usa credencial 'Postgres Supabase' (id zCloHRdid9ip2utf) e chama o RPC public.chat_record_outbound_message no Supabase. | edge function agent-tools (1 slug) e invocada por 4 nos com actions distintas: agent_block_customer(action=block), agent_pause_customer(action=pause), agent_transfer_human(action=transfer_human) e o httpRequest 'gate_ai_may_send'(action=ai_may_send, gate que decide se a IA pode responder). generate-payment-link-abacate e chamada por 2 tools (link_pagamento_pix e gerar_link_extra). | RPC chat_record_outbound_message chamado via no postgres 'registrar_outbound_chat' com args (number_instance, clientId, 'text', jsonb body, message_id, 'sent', 'ai'). | TRAP de no desabilitado: 'HTTP Request1' (->api.cpt-ibirite.7bee.top/webhook/resgate30min) esta disabled:true, mas o n8n faz passthrough do input, entao 'Update a row' (clientes_cobranca_setembro) e 'Update a row1' (clientes_cobranca_dashboard) AINDA executam — esses writes de respondeu/data_ultima_mensagem_temp sao ativos. | clientes_cobranca_dashboard e clientes_cobranca_setembro sao tabelas do n8n (nao do CHAT-CDT). | SEGURANCA: token Bearer da Meta WhatsApp esta hardcoded nos headers de varios nos httpRequest. | A insercao do 9o digito no telefone (regex no filtro do 'Get many rows') so e aplicada na leitura; updates por whatsapp usam $('Merge').whatsapp cru. | Project ref Supabase confirmado: ubwcxktaruxqacxltovq."
+  },
+  {
+    "workflow": "CDT Relacionamento - Tatuapé",
+    "trigger": "rabbitmqTrigger",
+    "schedule": null,
+    "purpose": "Fluxo de relacionamento/retenção (não cobrança) da unidade Tatuapé: consome mensagens WhatsApp inbound de filiados adimplentes (mensalidade em dia) via fila RabbitMQ, faz buffer no Redis, identifica o cliente em adimplentes_base, monta o prompt do agente isa_tt com contexto do cliente e do último template enviado, roda um AI Agent (gpt-4.1-mini) e responde via WhatsApp Cloud API. Trata handoff humano (CHAT-CDT) e opt-out de relacionamento.",
+    "reads": [
+      {
+        "table": "adimplentes_base",
+        "columns": [
+          "telefone",
+          "nome",
+          "matricula",
+          "unit_id",
+          "last_relacionamento_template"
+        ],
+        "via": "Supabase getAll 'Get many rows' (filtro telefone eq) + colunas lidas no 'Map Adimplente'",
+        "confidence": "confirmado"
+      },
+      {
+        "table": "agents",
+        "columns": [
+          "name",
+          "prompt"
+        ],
+        "via": "Supabase getAll 'Buscar Prompt Padrão (PIX)' (filtro name eq 'isa_tt'); coluna prompt lida no code 'Render Prompt SS'",
+        "confidence": "confirmado"
+      },
+      {
+        "table": "template_inventory",
+        "columns": [
+          "template_name",
+          "body_text"
+        ],
+        "via": "Supabase getAll 'Buscar Template Recebido' (filtro template_name eq cadence_ultimo_template); body_text lida no code 'Render Prompt SS'",
+        "confidence": "confirmado"
+      },
+      {
+        "table": "n8n_relacionamento_histories",
+        "columns": [
+          "session_id",
+          "message"
+        ],
+        "via": "langchain memoryPostgresChat 'Postgres Chat Memory1' (sessionKey=clientId, contextWindowLength 30) - leitura do histórico",
+        "confidence": "inferido"
+      }
+    ],
+    "writes": [
+      {
+        "table": "n8n_relacionamento_histories",
+        "columns": [
+          "session_id",
+          "message"
+        ],
+        "op": "insert",
+        "via": "langchain memoryPostgresChat 'Postgres Chat Memory1' - persiste turnos da conversa",
+        "confidence": "inferido"
+      }
+    ],
+    "rpcs": [
+      "chat_record_outbound_message (Postgres executeQuery 'registrar_outbound_chat': select public.chat_record_outbound_message(number_instance, clientId, 'text', jsonb body, msg_id, 'sent','ai') - registra mensagem outbound; tabela-alvo encapsulada na função)",
+      "isa_registrar_opt_out (tool httpRequest 'registrar_opt_out' POST /rest/v1/rpc/isa_registrar_opt_out, param p_phone=Merge.whatsapp - marca opt-out de relacionamento)"
+    ],
+    "edge_called": [
+      "agent-tools (Supabase Functions https://ubwcxktaruxqacxltovq.supabase.co/functions/v1/agent-tools, chamado 2x: tool 'transferir_para_atendente' com action=transfer_human/reason=other_support e gate 'gate_ai_may_send' com action=ai_may_send; payload wa_id+unit_id)"
+    ],
+    "external": [
+      "rabbitmq (fila 'tatuape-relacionamento', parallelMessages 20 - trigger)",
+      "redis (buffer de mensagens por clientId: push/get/delete em lista 'messages')",
+      "openai (gpt-4o-mini para descrever imagem, gpt-4.1-mini no AI Agent temp 0.7, whisper-1 para transcrição de áudio)",
+      "graph meta (graph.facebook.com v23.0: envio de mensagens WhatsApp Cloud API e download de mídia áudio/imagem/documento; Bearer token hardcoded)"
+    ],
+    "notes": "Trigger é rabbitmqTrigger (não há scheduleTrigger/webhook real; o nó 'Webhook' é um code node que faz JSON.parse do content do RabbitMQ). Roteamento: nó 'If' só prossegue para 3 phone_number_id (metadata): 1159285163925383, 716780894855496, 665807493278294. Switch de tipo de mensagem (image/button/text/audio/document) com download de mídia da Meta + Whisper (áudio) + chainLlm gpt-4o-mini (imagem) + extractFromFile pdf (documento). Tabela n8n_relacionamento_histories tem prefixo n8n_ => é tabela do n8n (per CLAUDE.md, não alterar); colunas session_id/message são implícitas do framework langchain (inferido). chat_record_outbound_message é função do CHAT-CDT (escreve outbound, tabela encapsulada). Edge function agent-tools e RPC isa_registrar_opt_out pertencem ao projeto Supabase do CHAT-CDT (ref ubwcxktaruxqacxltovq). Gate de envio: 'gate_ai_may_send' verifica ai_may_send antes de o agente responder (respeita handoff humano). ASIDE de segurança (fora de lineage): há um Bearer token da Meta em texto puro replicado em vários nós HTTP (HTTP Request, HTTP Request5-10) - credencial exposta no JSON."
+  },
+  {
+    "workflow": "DISPAROS MOTOR V2 - TT",
+    "trigger": "scheduleTrigger",
+    "schedule": "Mon-Fri (weekdays 1-5) às 09:00, 12:00, 17:00 e 19:30 — timezone America/Sao_Paulo. 4 nós scheduleTrigger separados, cada um define slot_index 1-4 respectivamente.",
+    "purpose": "Motor de disparos agendados de mensagens WhatsApp para a unidade Tatuapé-SP (CDT). Em 4 horários fixos por dia útil, busca a leva de disparos do slot via RPC no Supabase e envia cada mensagem pela Meta Graph API (WhatsApp Cloud). Provavelmente disparos de cobrança/notificação para inadimplentes.",
+    "reads": [],
+    "writes": [],
+    "rpcs": [
+      "motor_v2_get_disparos"
+    ],
+    "edge_called": [],
+    "external": [
+      "Meta Graph API / WhatsApp Cloud API (graph.facebook.com/v22.0/{phone_number_id}/messages) — envio de mensagens, auth Bearer waba_token",
+      "Supabase (host do RPC motor_v2_get_disparos via /rest/v1/rpc, credencial supabaseApi 'Supabase' id XNmArtHSwhHd4K6K)"
+    ],
+    "notes": "LINEAGE DE TABELAS NÃO DETERMINÁVEL POR ESTE WORKFLOW: não há nós n8n-nodes-base.supabase nem SQL bruto. Todas as leituras/escritas de tabela estão encapsuladas dentro da função RPC `motor_v2_get_disparos` (chamada via httpRequest POST a /rest/v1/rpc/motor_v2_get_disparos). Para mapear reads/writes reais seria necessário o corpo da função no banco. reads/writes vazios = não há referência literal de tabela/coluna no JSON; não foi fabricada nenhuma linha 'inferido'.\n\nPARÂMETROS DA RPC: p_unit_id = literal '72850698-6fcd-45b4-87ff-0c6fddab8f33' (unidade Tatuapé-SP, casa com a tag 'Tatuapé-SP' e o 'TT' no nome do fluxo — single-unit hardcoded); p_slot_index = $json.slot_index (1-4 conforme o horário do trigger). Header Prefer: return=representation.\n\nFLUXO: 4 scheduleTrigger -> nó Set (slot 1-4 define slot_index) -> RPC motor_v2_get_disparos (neverError=true, alwaysOutputData) -> nó code 'Itemizar' (achata resposta: aceita array, objeto com whatsapp_payload, ou objeto com .data[]) -> splitInBatches 'Loop' -> httpRequest 'Enviar Meta' (onError=continueRegularOutput) -> volta ao Loop.\n\nCAMPOS RETORNADOS PELA RPC E CONSUMIDOS DOWNSTREAM (são campos de payload, NÃO colunas de tabela confirmadas): whatsapp_payload (corpo enviado à Meta), waba_token (Bearer auth), phone_number_id (path da URL Meta). Mantidos aqui em notes, fora de reads, por não serem referências literais de coluna.\n\nAMBIGUIDADE RELEVANTE PARA LINEAGE: NÃO há write-back de status de envio para o Supabase neste fluxo — nenhum nó grava resultado da Meta de volta. Ou a própria RPC motor_v2_get_disparos marca as linhas como enviadas no momento do fetch, ou o estado de entrega é rastreado em outro fluxo. Importante para quem trace o estado de dispatch.\n\nOUTROS: workflow active=true; binaryMode=separate; node IDs Meta usam Graph API v22.0; sem Google Drive/planilha/redis/rabbitmq/gmail/openai neste fluxo."
+  },
+  {
+    "workflow": "RabbitMQ",
+    "trigger": "rabbitmqTrigger",
+    "schedule": null,
+    "purpose": "Consome mensagens WhatsApp inbound da fila RabbitMQ \"cdt\" (envelope de webhook da Meta Graph repassado pelo n8n), chama o RPC route_inbound do Supabase para decidir o trilho (rail) do contato e republica a mensagem na fila correta (cobranca ou relacionamento). Em paralelo, registra o inbound para analytics via RPC record_inbound_message.",
+    "reads": [],
+    "writes": [
+      {
+        "table": "message_inbound",
+        "columns": [],
+        "op": "insert",
+        "via": "RPC record_inbound_message (httpRequest POST /rest/v1/rpc/record_inbound_message com p_phone_number_id, p_message); o comentario do no 'Parse Inbound (analytics)' afirma 'captura inbound pra message_inbound (analytics)'. Tabela/colunas nao aparecem literalmente no JSON — escrita encapsulada na funcao RPC.",
+        "confidence": "inferido"
+      }
+    ],
+    "rpcs": [
+      "route_inbound",
+      "record_inbound_message"
+    ],
+    "edge_called": [],
+    "external": [
+      "rabbitmq (consome fila 'cdt'; publica em fila dinamica $json.queue para os trilhos cobranca/relacionamento; credencial id b0qhhFeeaYq9iTMW)",
+      "supabase (REST rpc via httpRequest; project ref ubwcxktaruxqacxltovq; credencial supabaseApi id XNmArtHSwhHd4K6K)",
+      "meta graph / whatsapp (payload de webhook da Meta consumido: entry[0].changes[0].value.contacts[0].wa_id, value.metadata.phone_number_id, value.messages — nao chamado diretamente, apenas o envelope eh processado)"
+    ],
+    "notes": "Fluxo READ-ONLY de roteamento; nao ha nos n8n-nodes-base.supabase nem chamadas a /functions/v1/ (nenhuma edge function). Todas as interacoes com o banco sao via httpRequest para /rest/v1/rpc/. ENTRADAS dos RPCs (confirmadas como literais): route_inbound recebe p_phone = clientId (= entry[0].changes[0].value.contacts[0].wa_id); record_inbound_message recebe p_phone_number_id e p_message (objeto da mensagem). O campo de saida $json.rail (valores 'cobranca' | 'relacionamento') e $json.queue vem do retorno do RPC route_inbound — usados no no Switch Rail e nos publishes RabbitMQ; sao inferidos como colunas/campos do retorno do RPC, nao de tabela. O Switch Rail tem fallbackOutput='none' (mensagens sem rail conhecido sao descartadas). Os dois nos de analytics (Parse Inbound / RPC record_inbound_message) tem continueOnFail=true e neverError=true — blindados para nao impactar o roteamento. Nenhuma planilha do Google Drive ou ID de arquivo envolvido. Tabela message_inbound mencionada no comentario do codigo pode colidir com tabela do n8n (CLAUDE.md lista message_inbound como tabela do n8n a nao alterar) — confirmar o que o RPC record_inbound_message realmente escreve antes de assumir lineage."
+  },
+  {
+    "workflow": "Sync Adimplentes - Relacionamento (Motor v2)",
+    "trigger": "googleDriveTrigger",
+    "schedule": "poll a cada 15 min (pollTimes=everyHour nos minutos :00/:15/:30/:45) — baseado em polling, nao cron",
+    "purpose": "Importacao automatica de planilhas de ADIMPLENTES (relacionamento) por unidade: detecta arquivo novo em pastas do Google Drive (uma por unidade), valida a data do nome, baixa o binario e o encaminha (multipart) para um servico externo que faz o upsert/soft-delete no banco; ao final envia e-mail de resumo (novos/atualizados/que sairam).",
+    "reads": [],
+    "writes": [],
+    "rpcs": [],
+    "edge_called": [],
+    "external": [
+      "Google Drive (googleDriveTrigger event=fileCreated, 6 pastas vigiadas — Grupo Chagas id=1qqOrrcqjvMvGw-9SwrlkAqcrhHClbbt8; Vitoria id=1O1zP1ON_wqjVD8CGZvehKgCAujbvK_ZY; Mogi das Cruzes id=1kpYJTDliUfLOc73r7D1OoEMxgPfxHmAl; Tatuape id=1qorCQZffnDa2gIXe_DckTK1xSQIjFDHK; Lavras id=13TMAfg_TqWmTWX_GzW_j2cXRS0HIdV4d; Caraguatatuba id=14hi7_7hooS_vqOzQNtaMsoygcUM68e3d; download do arquivo via googleDrive node)",
+      "Servico HTTP externo customizado (httpRequest POST http://host.docker.internal:8100/adimplentes/sync, multipart-form-data com file/file_name/file_id, httpHeaderAuth 'Sync Adimplentes', timeout 600s, retry 2x) — NAO e edge function Supabase",
+      "Gmail (n8n-nodes-base.gmail, e-mail de resumo para victor@7bee.ai, andre@7bee.ai, 7beeai@gmail.com)"
+    ],
+    "notes": "LINEAGE: este workflow NAO contem nenhum no Supabase/Postgres, nenhuma URL /rest/v1/ nem /functions/v1/ — portanto reads/writes/rpcs/edge_called sao vazios. Toda a persistencia (upsert de adimplentes + marcacao de quem saiu) acontece DENTRO do servico externo em http://host.docker.internal:8100/adimplentes/sync, fora do n8n; este fluxo apenas vigia o Drive, valida a data do nome do arquivo, baixa o binario e encaminha. O servico em :8100 e um servico Docker customizado (host.docker.internal), nao um edge function. O payload de resposta do servico (usado no e-mail) cita campos como total_rows, units_processed, total_new, total_updated, total_removed, per_unit, skipped, unmapped_franquias e a semantica 'bi_atual=false' para registros que sairam da lista de adimplentes (inferido — sao chaves do JSON de resposta do servico externo, nao colunas tocadas pelo n8n). QUIRK de data: o no 'Validate File Date' so processa arquivos cujo nome contem padrao DD;MM correspondente a hoje/ontem; arquivos SEM data no nome SEMPRE passam (_validated=true, _warning=no_date_in_name) por serem upload manual/semanal. TRIGGER: 6 instancias de googleDriveTrigger (uma por unidade/pasta), todas convergindo no mesmo no de validacao. Email node tem onError=continueRegularOutput."
+  },
+  {
+    "workflow": "Sync Planilha Power BI v3 (Robusto)",
+    "trigger": "googleDriveTrigger",
+    "schedule": "Poll a cada hora nos minutos :00, :15, :30 e :45 (efetivamente a cada 15 min). 9 nós googleDriveTrigger (um por unidade), evento fileCreated em pasta específica do Drive.",
+    "purpose": "Sincroniza planilhas de inadimplentes (Power BI) que cada franquia CDT sobe ao Google Drive. Ao detectar um arquivo novo, valida a data, converte XLSX->Google Sheets, lê os valores, normaliza/valida as linhas, agrupa por unidade e chama a RPC sync_cobranca_v2 no Supabase para atualizar a base de cobrança, depois limpa arquivos e envia e-mail de relatório. ATENÇÃO: workflow está active=false e o código roda com DRY_RUN=true (apenas simulação, nada é gravado no banco no estado atual).",
+    "reads": [
+      {
+        "table": "units",
+        "columns": [
+          "id",
+          "bi_name"
+        ],
+        "via": "Buscar Unidades (n8n-nodes-base.supabase, operation getAll, tableId 'units', returnAll); colunas usadas literalmente no nó 'Detectar e Normalizar' (u.json.id, u.json.bi_name)",
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [
+      {
+        "table": "(tabela de cobrança não nomeada no JSON — interna à RPC sync_cobranca_v2)",
+        "columns": [
+          "matricula",
+          "name",
+          "whatsapp",
+          "valor_inadimplente",
+          "regua",
+          "forma_pagamento",
+          "status"
+        ],
+        "op": "upsert/insert/update/delete (motor de sync interno à RPC)",
+        "via": "RPC sync_cobranca_v2 (httpRequest POST /rest/v1/rpc/sync_cobranca_v2); payload p_records com esses campos por registro",
+        "confidence": "inferido"
+      }
+    ],
+    "rpcs": [
+      "sync_cobranca_v2"
+    ],
+    "edge_called": [],
+    "external": [
+      "googleDrive",
+      "googleSheets",
+      "gmail"
+    ],
+    "notes": "ESTADO ATUAL: workflow com active=false E DRY_RUN=true hardcoded no nó 'Detectar e Normalizar' (const DRY_RUN = true). No estado atual apenas simula — nada é gravado no banco. Comentário no código indica trocar para false para ir a produção.\n\nNOME vs RPC REAL: o nó chama-se 'Sync RPC (motor v3)' e o workflow é 'v3', mas a URL chamada é /rest/v1/rpc/sync_cobranca_v2 (v2, não v3).\n\nrollback_sync(sync_log_id): aparece APENAS como texto no corpo do e-mail (instrução manual de reversão). NÃO é chamada pelo fluxo — não incluída em rpcs.\n\nPROJETO SUPABASE: ref ubwcxktaruxqacxltovq (URL https://ubwcxktaruxqacxltovq.supabase.co). É o banco compartilhado com o n8n.\n\nPASTAS GOOGLE DRIVE (lineage): 9 pastas-fonte, uma por unidade — Grupo Chagas 1NaEaV3u4iCoFzzP_Pf5NkBaMJ_re_OIB; Tatuapé 1dpIVFlbmzzztv4jkJhZWYU60e4kaxftX; Vitória 1q4ozWkCqPQMg6XXGP8CXuWmr2NQmMmri; Mogi das Cruzes 1XEKIAlYi9S6143vqtwUQOsZ9Prz3ut1N; Patrocínio 1Z1I-5_ja9t8efRvcyV_RkHXm_b-sh_sA; Lavras 1iKsk_Tk9xfPOOfzaQRRz3ImBMzBzpYsZ; Sapopemba 1hrh4Jtt4ckTofT3R_BanfqsXoISKGttX; Caraguatatuba 1xAF6PPIWB9MDCdqOQoiYBitRq3VyCs_x; Campo Limpo 14Z2jIQKBW8qLzqyp56dUYsBhJqiFFlK4. Pasta de saída dos arquivos convertidos: 1gbj6dpV1YIEWdiwuuIL1yNoV2CI38vmT.\n\nMAPEAMENTO UNIDADE: franquia da planilha -> unit_id via units.bi_name (chave limpa com trim+uppercase). Franquia sem match em units.bi_name gera abort 'franquia_desconhecida' e e-mail de alerta.\n\nREGRA ESPECIAL SPB: unit_id 78d18121-fbfc-4900-a6a1-3f4933d86cbe (Sapopemba) ignora linhas onde 'forma de pagamento' = 'CONCESSIONARIA ENERGIA'.\n\nMULTI-UNIDADE / IDEMPOTÊNCIA: arquivo pode conter várias franquias; o código emite UM rpc_payload por unidade reconhecida (N chamadas à RPC, transação atômica por unidade). p_file_id é sufixado por unit_id (ou rótulo do abort: header/unknown/empty) para idempotência e log da RPC não colidirem entre unidades.\n\nCAMPOS DO PAYLOAD RPC (p_*): p_file_name, p_converted_file_id, p_dry_run, p_file_id, p_unit_id, p_records, p_validation_errors, p_skipped, p_header_row, p_abort_rule, p_abort_reason. Records: matricula, name, whatsapp (E.164 com 55+DDD+9), valor_inadimplente (centavos = VAM*100), regua, forma_pagamento, status='novo'.\n\nRESPOSTA DA RPC (usada no e-mail): status (completed/dry_run/aborted/skipped_already_completed), file_name, unit_name, created, updated, deleted, paid_removed, total_clientes, valor_total, aging_medio_dias, sync_log_id, regua_transicao, dry_run, file_id, converted_file_id.\n\nHTTP DIRETO (não-Supabase): Converter XLSX faz POST googleapis.com/drive/v3/files/{id}/copy (Drive copy p/ Sheets); Ler Valores faz GET sheets.googleapis.com/v4/.../values/A1:CZ; Limpar Arquivo Convertido e Limpar Arquivo Original fazem DELETE no Drive. Nenhum httpRequest para /rest/v1/<tabela> direto nem para /functions/v1/ — sem edge functions.\n\nerrorWorkflow configurado: YmcZDVr5JFtYxQw6. Timezone America/Sao_Paulo. Sync RPC com retryOnFail (3 tentativas, 3s entre)."
+  }
+]

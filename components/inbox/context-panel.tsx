@@ -6,7 +6,6 @@ import {
   BadgeCheck,
   Copy,
   ExternalLink,
-  Receipt,
   X,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -93,25 +92,28 @@ export function ContextPanel({
             {phone}
           </div>
         </div>
-        {unitName && uc && (
-          <span
-            className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.04em]"
-            style={{ borderColor: uc.border, color: uc.fg }}
-          >
+        <div className="flex flex-wrap items-center justify-center gap-1.5">
+          {unitName && uc && (
             <span
-              className="size-[5px] rounded-full"
-              style={{ backgroundColor: uc.solid }}
-              aria-hidden
-            />
-            {unitName}
-          </span>
-        )}
+              className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.04em]"
+              style={{ borderColor: uc.border, color: uc.fg }}
+            >
+              <span
+                className="size-[5px] rounded-full"
+                style={{ backgroundColor: uc.solid }}
+                aria-hidden
+              />
+              {unitName}
+            </span>
+          )}
+          <TrilhoBadge trilho={debtor?.trilho} />
+        </div>
       </div>
 
-      {/* Cobrança */}
+      {/* Cobrança — escondida para contatos de relacionamento (sem dívida) */}
       {matched && debtor ? (
         <DebtSection debtor={debtor} />
-      ) : (
+      ) : debtor?.trilho === 'relacionamento' ? null : (
         <div className="border-b border-border px-5 pb-4 text-center">
           <p className="font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground">
             Cobrança
@@ -154,6 +156,46 @@ export function ContextPanel({
         </p>
       </div>
     </aside>
+  )
+}
+
+/**
+ * Selo do trilho do contato (migration 0015): cobrança (telefone casa com
+ * devedor) ou relacionamento (telefone casa com adimplentes_base). Quando o
+ * contato não está em nenhuma base, `trilho` é null/ausente e não renderiza.
+ */
+function TrilhoBadge({
+  trilho,
+}: {
+  trilho?: 'cobranca' | 'relacionamento' | null
+}) {
+  if (trilho !== 'cobranca' && trilho !== 'relacionamento') return null
+  const cfg =
+    trilho === 'cobranca'
+      ? {
+          label: 'Cobrança',
+          cls: 'border-amber-500/30 bg-amber-500/10 text-amber-400',
+          dot: 'rgb(251 191 36)',
+        }
+      : {
+          label: 'Relacionamento',
+          cls: 'border-sky-500/30 bg-sky-500/10 text-sky-400',
+          dot: 'rgb(56 189 248)',
+        }
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.04em]',
+        cfg.cls,
+      )}
+    >
+      <span
+        className="size-[5px] rounded-full"
+        style={{ backgroundColor: cfg.dot }}
+        aria-hidden
+      />
+      {cfg.label}
+    </span>
   )
 }
 

@@ -1,0 +1,1627 @@
+[
+  {
+    "items": [
+      {
+        "object": "clientes_cobranca_setembro",
+        "papel_real": "entidade",
+        "vira": "devedor (entidade central do v3)",
+        "atributos_chave": [
+          "matricula",
+          "name",
+          "whatsapp",
+          "valor_inadimplente",
+          "regua",
+          "status",
+          "unit_id",
+          "pagamento_feito",
+          "data_pagamento",
+          "bloqueio_disparos",
+          "motivo_bloqueio",
+          "bloqueado_em",
+          "disparos_pausados_ate",
+          "pausa_motivo",
+          "pausa_data_prometida",
+          "cadence_fase",
+          "cadence_dia_ciclo",
+          "cadence_branch_state",
+          "cadence_proximo_envio_at",
+          "slots_enviados_hoje",
+          "last_inbound_at",
+          "resgate_at",
+          "link_pagamento",
+          "correlation_id",
+          "created_at",
+          "updated_at"
+        ],
+        "evidencia": "setembro.md: 'lista VIVA mantida por sync_cobranca_v2; base de leitura/escrita do motor v2'; 50 colunas, chave de fato = matricula (UNIQUE _matricula_key, 119k scans); unit_id FK->units; n_tup_ins=0 + 49.6k linhas confirma fork de clientes_cobranca. Carrega TODOS os estados-coluna do nucleo: cadence_*, bloqueio_*, pausa_*, link_*. 09-fluxo-planilha §4.7: em saida sofre DELETE FISICO (lista viva)."
+      },
+      {
+        "object": "clientes_cobranca_dashboard",
+        "papel_real": "entidade",
+        "vira": "MESMA entidade devedor (consolidar com setembro); pagamento/reembolso/baixa viram EVENTOS; cadence_* espelhado vira view/relatorio derivado",
+        "atributos_chave": [
+          "matricula",
+          "name",
+          "whatsapp",
+          "valor_inadimplente",
+          "regua",
+          "status",
+          "unit_id",
+          "bi_atual",
+          "pagamento_feito",
+          "data_pagamento",
+          "plataforma_pagamento_utilizada",
+          "reembolso_realizado",
+          "reembolso_motivo",
+          "baixa_realizada",
+          "disparos",
+          "disparos_equipe",
+          "data_ultimo_disparo",
+          "data_ultima_mensagem_temp",
+          "created_at",
+          "updated_at"
+        ],
+        "evidencia": "dashboard.md: lineage compartilhado com setembro (sequencia clientes_cobranca_setembro_id_seq; trigger mirror_disparo_fields espelha setembro->dashboard por matricula). NAO e espelho passivo: e write-target PRIMARIO de pagamento/reembolso/baixa (register_payment, guard_recent_payment_dashboard, mark_refund_by_correlation, edges Stripe/Woovi/Abacate). Em saida NUNCA deleta -> marca bi_atual=false (livro-razao). COMMENT 'duplicate of setembro' = stale/enganoso. Bloat severo 1793MB/95k linhas + 548MB de indices mortos (defeito a NAO replicar no v3)."
+      },
+      {
+        "object": "cliente_cadencia",
+        "papel_real": "entidade",
+        "vira": "ciclo_cadencia (tabela propria; um registro por episodio de inadimplencia/ciclo)",
+        "atributos_chave": [
+          "id",
+          "matricula",
+          "unit_id",
+          "telefone",
+          "nome",
+          "regua",
+          "dia_ciclo",
+          "ciclo_numero",
+          "entrou_em",
+          "status",
+          "paused_at",
+          "paused_reason",
+          "finalizado_at",
+          "pago_at",
+          "last_advance_date",
+          "created_at",
+          "updated_at"
+        ],
+        "evidencia": "cliente_cadencia.md: 'estado por cliente dentro de um ciclo de 21 dias (Motor v2)'; APPEND-ONLY (27.5k inserts, 0 deletes); volta a inadimplir => NOVO row com ciclo_numero+1 (nunca reativa). UNIQUE parcial idx_cliente_cadencia_ativo_unico garante 1 ciclo vivo por (matricula,unit_id); UNIQUE _matricula_unit_id_ciclo_numero_key garante 1 row por ciclo historico. Referenciada por FK de disparos_log.cliente_cadencia_id e fila_humana.cliente_cadencia_id. Status com lifecycle ACTIVE->PAGO/FINALIZADO/PAUSED_*. REFINA o hint da tarefa ('cadencia=estado-coluna'): a forma estado-coluna so existe no legado de setembro.cadence_*; o Motor v2 ja promoveu o CICLO a entidade de 1a classe -> v3 deve seguir a forma entidade."
+      },
+      {
+        "object": "fila_humana",
+        "papel_real": "entidade",
+        "vira": "tabela propria (caso/atendimento de cobranca; fila de excecao)",
+        "atributos_chave": [
+          "id",
+          "unit_id",
+          "matricula",
+          "telefone",
+          "nome",
+          "cliente_cadencia_id",
+          "motivo",
+          "motivo_detalhe",
+          "entered_at",
+          "assigned_to",
+          "assigned_at",
+          "resolved_at",
+          "resolved_outcome",
+          "notes"
+        ],
+        "evidencia": "fila_humana.md: fila de excecao do Motor v2; entra por (1) finalizacao dia 21 sem pagamento (FINALIZOU_21D via motor_v2_finalizar_dia22), (2) bloqueio (trg_motor_v2_bloqueio_cliente), (3) falha persistente. Lifecycle proprio entered->assigned->resolved+outcome (campos assigned_*/resolved_*/notes preenchidos pelo operador na app). FK cliente_cadencia_id->cliente_cadencia. Dedup: trigger de bloqueio le resolved_at IS NULL p/ nao duplicar item aberto. NOTA: sobrepoe conceito de handoff do CHAT-CDT (conversations.routing) - avaliar unificacao no v3. BUG a corrigir: updated_at congelado (sem trigger BEFORE UPDATE)."
+      },
+      {
+        "object": "blacklist_global",
+        "papel_real": "entidade",
+        "vira": "blacklist global (tabela propria; chave = whatsapp; cross-franquia)",
+        "atributos_chave": [
+          "id",
+          "whatsapp",
+          "motivo",
+          "unit_origem",
+          "matricula_origem",
+          "raw_evidence",
+          "created_at"
+        ],
+        "evidencia": "blacklist_global.md: 'lista de bloqueio (opt-out) GLOBAL e compartilhada entre franquias'. Chave de negocio = whatsapp (UNIQUE blacklist_global_whatsapp_key, 2798 scans quentissimo). NAO e coluna de um devedor unit-scoped: e cross-unit, persiste mesmo se a unidade/matricula mudar (unit_origem/matricula_origem sao soft refs em texto, sem FK). Gate de compliance: is_blacklisted(whatsapp) consultado antes de TODO disparo. Insert idempotente add_to_blacklist ON CONFLICT(whatsapp) DO NOTHING. motivo in {SAIR, Meta, invalido, LGPD}. LACUNA: sem trigger de auditoria p/ event_log (decisao LGPD sem trilha automatica - corrigir no v3). Leitura secundaria: tambem serve como config-referencia de supressao."
+      },
+      {
+        "object": "cobranca_clientes_removidos",
+        "papel_real": "evento",
+        "vira": "evento_saida_cobranca (tabela append-only ligada ao devedor)",
+        "atributos_chave": [
+          "id",
+          "matricula",
+          "name",
+          "whatsapp",
+          "unit_id",
+          "regua_no_momento",
+          "status_no_momento",
+          "valor_no_momento",
+          "motivo",
+          "dias_na_base",
+          "entrou_em",
+          "removido_em",
+          "sync_log_id",
+          "snapshot_date"
+        ],
+        "evidencia": "cobranca_clientes_removidos.md + 09-fluxo-planilha §4.8: trilha append-only de quem SAIU da base viva (setembro) num sync. Alimentada por DELETE...RETURNING de sync_cobranca_v2; congela o estado do devedor no momento da saida. motivo in {'sumiu_da_planilha','pagamento_feito'}. sync_log_id FK->spreadsheet_sync_log (permite rollback limpar). HOJE quase write-only: 13/14 colunas sem leitor; unico reader e rollback_sync (so a coluna sync_log_id no DELETE). Casa com o hint da tarefa 'saida e evento'. Indices secundarios (matricula, unit+date) revelam intencao de relatorio de saidas ainda nao implementado."
+      }
+    ],
+    "state_machines": [
+      {
+        "nome": "Ciclo de cadencia Motor v2 (entidade ciclo_cadencia)",
+        "estados": [
+          "ACTIVE",
+          "PAUSED_REGUA_MORTA",
+          "PAUSED_BLOQUEADO",
+          "PAGO",
+          "FINALIZADO"
+        ],
+        "transicoes": "Seed ACTIVE no dia_ciclo=1 (motor_v2_get_disparos/planejador). Avanca +1 dia/noite (motor_v2_avancar_dia, idempotente por last_advance_date < target_date). dia_ciclo>21 => motor_v2_finalizar_dia22 seta status=FINALIZADO + finalizado_at e ENFILEIRA em fila_humana (motivo FINALIZOU_21D). Pagamento (setembro.pagamento_feito) => status=PAGO + pago_at (fallback em motor-v2-fechamento). Regua sai do conjunto reguas_efetivas do gate => PAUSED_REGUA_MORTA. Bloqueio/pausa (trg_motor_v2_bloqueio_cliente) => PAUSED_BLOQUEADO + paused_at/paused_reason. Cliente volta a inadimplir => NAO reativa: cria NOVO row com ciclo_numero+1.",
+        "onde_vive_hoje": "cliente_cadencia.status (n8n/Motor v2); UNIQUE parcial idx_cliente_cadencia_ativo_unico garante 1 ciclo vivo por (matricula,unit_id)"
+      },
+      {
+        "nome": "Cadencia legada na god-table (fase de relacionamento->cobranca)",
+        "estados": [
+          "NULL (fora da cadencia)",
+          "00 (relacionamento)",
+          "01 (cobranca)"
+        ],
+        "transicoes": "sync_cobranca_v2 semeia cadence_fase='00' quando regua='NR' (entrada em relacionamento). advance_cadence_state avanca fase/dia_ciclo/slot. COMMENT da coluna: NULL=fora, '00'=relacionamento, '01'=cobranca. [inferido] convive/duplica com cliente_cadencia (Motor v2) - possivel par de geracoes; para o v3 consolidar tudo no ciclo_cadencia (entidade).",
+        "onde_vive_hoje": "clientes_cobranca_setembro.cadence_fase + cadence_dia_ciclo + cadence_slot (estado-coluna, espelhado p/ dashboard via mirror_disparo_fields). Config da matriz regua x dia_ciclo x slot vive em cadence_calendar (262 linhas, RLS off)"
+      },
+      {
+        "nome": "Branch de Resgate IA",
+        "estados": [
+          "normal",
+          "em_conversa_ia",
+          "aguardando_resgate_ia_3h",
+          "finalizado"
+        ],
+        "transicoes": "Default 'normal'. n8n (PATCH 'Marcar Em Conversa') => em_conversa_ia + seta last_inbound_at/zera resgate_at. Resgate IA 3h le last_inbound_at (indice idx_clientes_resgate WHERE em_conversa_ia AND not pago) e seta resgate_at. register_payment => 'finalizado' ao pagar. picker_select_batch so seleciona branch='normal' (clientes em conversa nao recebem disparo automatico).",
+        "onde_vive_hoje": "clientes_cobranca_setembro.cadence_branch_state (estado-coluna; COMMENT confirma valores). Apoio: last_inbound_at, resgate_at"
+      },
+      {
+        "nome": "Bloqueio / Pausa de disparos",
+        "estados": [
+          "ativo (sem bloqueio/pausa)",
+          "bloqueado (expira ~30d)",
+          "pausado-ate-data"
+        ],
+        "transicoes": "agent_block_customer seta bloqueio_disparos=true + motivo_bloqueio + bloqueado_em + bloqueio_contexto. cron_unblock_expired limpa apos >30 dias (idx_cobranca_setembro_bloqueio_expira). agent_pause_customer seta disparos_pausados_ate + pausa_motivo + pausa_data_prometida; cron_clear_expired_pause limpa pausa vencida (get_pausas_vencidas). trg_motor_v2_bloqueio_cliente (AFTER UPDATE OF bloqueio_disparos, disparos_pausados_ate): cancela disparos futuros (motor_v2_cancel_future_disparos), poe ciclo em PAUSED_BLOQUEADO em cliente_cadencia e ABRE item em fila_humana (dedup por resolved_at IS NULL). motor v2/picker excluem bloqueados/pausados da selecao.",
+        "onde_vive_hoje": "clientes_cobranca_setembro: bloqueio_disparos + motivo_bloqueio + bloqueado_em + bloqueio_contexto + disparos_pausados_ate + pausa_motivo + pausa_data_prometida + pausa_registrada_em (estado-coluna)"
+      },
+      {
+        "nome": "Pagamento / saida da cobranca",
+        "estados": [
+          "em_cobranca (pagamento_feito=false)",
+          "pago (pagamento_feito=true)"
+        ],
+        "transicoes": "register_payment / edges de gateway / guard_recent_payment_* (BEFORE INSERT/UPDATE: detecta pagamento <48h em 'pagamentos' por matricula e marca a linha como paga - anti-regressao). Ao pagar: em setembro => DELETE fisico no proximo sync (RETURNING -> cobranca_clientes_removidos motivo='pagamento_feito'); em dashboard => bi_atual=false (nunca deleta); ciclo => PAGO; branch => 'finalizado'; cancela links pendentes (trg_cancel_pending_links_on_payment). Pago NAO e recobravel (guard 48h impede regressao).",
+        "onde_vive_hoje": "clientes_cobranca_setembro.pagamento_feito / data_pagamento; espelho dashboard.pagamento_feito; evento real em 'pagamentos' (fora desta lista; os guards copiam de la) -> no v3 pagamento e EVENTO"
+      },
+      {
+        "nome": "Link de pagamento",
+        "estados": [
+          "gerado",
+          "enviado",
+          "pago",
+          "cancelado",
+          "expirado"
+        ],
+        "transicoes": "edge generate-payment-link[-abacate] seta link_pagamento + correlation_id + hora_link_gerado + link_pagamento_enviado=true. Pagamento => trg_cancel_pending_links_on_payment cancela links sem pagamento associado (links_pagamentos_gerados.status='cancelled'). Mudanca de regua OU valor_inadimplente => DB Webhook cancel_links_on_regua_valor_update chama edge cancel-payment-links (cancela nos gateways Woovi/Stripe). limpar_links_pagamento_expirados NULL-ifica link/correlation_id (expiracao). [DB webhook disparou ~3,96M de vezes sob nome antigo - sinal de update em massa per-row].",
+        "onde_vive_hoje": "clientes_cobranca_setembro/dashboard: link_pagamento, link_pagamento_enviado, correlation_id, hora_link_gerado (estado-coluna). Estado canonico do link em links_pagamentos_gerados.status (fora desta lista)"
+      },
+      {
+        "nome": "bi_atual (ativo vs historico no livro-razao)",
+        "estados": [
+          "true (registro do BI atual / em cobranca)",
+          "false (saiu / historico)"
+        ],
+        "transicoes": "sync_cobranca_v2: INSERT/UPDATE de quem esta na planilha => bi_atual=true; quem sumiu de setembro => UPDATE dashboard SET bi_atual=false (linha permanece como historico). Distingue, no dashboard, devedor ativo de devedor que ja passou.",
+        "onde_vive_hoje": "clientes_cobranca_dashboard.bi_atual (estado-coluna; chave de leitura do inbox: ORDER BY bi_atual desc)"
+      },
+      {
+        "nome": "Fila humana (item de atendimento)",
+        "estados": [
+          "aberto (entered, resolved_at IS NULL)",
+          "atribuido (assigned)",
+          "resolvido (resolved + outcome)"
+        ],
+        "transicoes": "Aberto por motor_v2_finalizar_dia22 (motivo FINALIZOU_21D) ou trg_motor_v2_bloqueio_cliente, com dedup (so abre se nao ha item aberto: resolved_at IS NULL). Atribuicao (assigned_to/assigned_at) e resolucao (resolved_at/resolved_outcome/notes) feitas pela app/operador. BUG: updated_at nao acompanha resolucao (sem trigger BEFORE UPDATE).",
+        "onde_vive_hoje": "fila_humana (entered_at, assigned_*, resolved_*); indice parcial idx_fila_humana_unit_aberta WHERE resolved_at IS NULL"
+      },
+      {
+        "nome": "Opt-out / Blacklist global",
+        "estados": [
+          "nao-listado",
+          "listado (bloqueado p/ disparo)"
+        ],
+        "transicoes": "add_to_blacklist (ON CONFLICT(whatsapp) DO NOTHING) por motivo in {SAIR, Meta(bloqueio), numero invalido, LGPD}. is_blacklisted(whatsapp) consultado antes de TODO disparo p/ suprimir envio. Append-only (sem remocao observada no corpus). Compartilhada cross-franquia.",
+        "onde_vive_hoje": "blacklist_global (chave whatsapp UNIQUE). FOOTGUN: is_blacklisted nao e SECURITY DEFINER + tabela RLS-on/0-policies => se chamada como anon/authenticated retorna 0 linhas => false silencioso (liberaria disparo a numero bloqueado)"
+      },
+      {
+        "nome": "Gate de saude -> reguas liberadas (governa pausa por regua morta)",
+        "estados": [
+          "health_color_efetivo (cor de saude resultante)",
+          "reguas_efetivas (conjunto de reguas permitidas)"
+        ],
+        "transicoes": "motor_v2_recalc_gate (disparado por trg_motor_v2_gate_from_phone_health/waba_health/waba_violations) recalcula health_color_calc a partir de phone_health, resolve override (system_state) -> health_color_efetivo, e deriva reguas_efetivas de gate_config.reguas_ativas + cap. O planejador/motor so disparam reguas dentro de reguas_efetivas; regua FORA do conjunto => ciclo entra em PAUSED_REGUA_MORTA. REGRA: a regua vem do BI (planilha); o motor NUNCA redefine a regua, so pausa/retoma.",
+        "onde_vive_hoje": "gate_state (1 por unidade): health_color_efetivo, reguas_efetivas[], relacionamento_ratio. Config base em gate_config; matriz de acao em cadence_calendar"
+      },
+      {
+        "nome": "Sync da planilha (idempotencia + sanity)",
+        "estados": [
+          "processing",
+          "completed",
+          "aborted",
+          "skipped_already_completed (retorno)"
+        ],
+        "transicoes": "sync_cobranca_v2 abre log 'processing'; SANITY GATE antes de qualquer escrita: empty_sheet (0 linhas) aborta; partial_export aborta se v_db_count>=50 E v_sheet_count < v_db_count*0.70 (anti-wipe contra export parcial do Power BI). Aborto pelo n8n (franquia_desconhecida) => status='aborted'. Sucesso => aplica diff (insert/update/delete) e fecha 'completed'. Mesmo file_id ja 'completed' => skipped_already_completed (idempotencia). Backup pre-sync em cobranca_sync_backup (retencao 14d); rollback manual via rollback_sync. ESTADO ATUAL: workflow active=false + DRY_RUN=true hardcoded => hoje SIMULA, nada e gravado.",
+        "onde_vive_hoje": "spreadsheet_sync_log.status (fora desta lista; citado p/ contexto). Backup: cobranca_sync_backup. Snapshot diario: sync_snapshots"
+      }
+    ],
+    "regras_negocio": [
+      "Matricula e a CHAVE de negocio do devedor: todas as juncoes (setembro<->dashboard<->pagamentos<->message_log<->cliente_cadencia<->removidos) sao por matricula, sem FK formal; dedup no sync por 'distinct on (matricula)'. No v3 promover matricula (+unit_id) a chave/constraint real.",
+      "Dinheiro em CENTAVOS: valor_inadimplente e armazenado como VAM x 100 (normalizado no n8n). Manter inteiro/centavos no v3.",
+      "whatsapp em E.164: '55' + DDD + '9'... (normalizado no n8n). Matching de telefone via norm_phone_br / chat_phone_match_key.",
+      "Tenant = unit_id (FK->units). Toda entidade do nucleo e unit-scoped, EXCETO a blacklist (global, cross-franquia por whatsapp).",
+      "1 ciclo de cadencia ATIVO por (matricula, unit_id) - garantido por UNIQUE parcial idx_cliente_cadencia_ativo_unico.",
+      "Cliente que volta a inadimplir NAO reativa o ciclo: cria-se NOVO row com ciclo_numero+1 (append-only; 0 deletes em cliente_cadencia).",
+      "Ao PAGAR o devedor sai da lista viva e NAO e recobravel: em setembro sofre DELETE fisico (RETURNING->removidos motivo='pagamento_feito'); em dashboard vira bi_atual=false (nunca deleta); guard_recent_payment_* (48h) impede regressao de pago->nao-pago.",
+      "A REGUA vem do BI (planilha); o motor NUNCA redefine a regua, apenas pausa/retoma. Regua fora do conjunto reguas_efetivas do gate => ciclo PAUSED_REGUA_MORTA.",
+      "Blacklist e GLOBAL e compartilhada entre franquias; is_blacklisted(whatsapp) e consultado antes de TODO disparo; insercao idempotente (ON CONFLICT whatsapp DO NOTHING); motivos: SAIR/Meta/invalido/LGPD.",
+      "Mudanca de regua OU de valor_inadimplente CANCELA links de pagamento ativos (DB webhook -> edge cancel-payment-links nos gateways Woovi/Stripe).",
+      "Dia 22 do ciclo sem pagamento => ciclo FINALIZADO + cliente enfileirado em fila_humana (motivo FINALIZOU_21D).",
+      "Bloqueio/pausa de um cliente: cancela disparos futuros, poe ciclo em PAUSED_BLOQUEADO E abre item em fila_humana (com dedup por item aberto resolved_at IS NULL).",
+      "SANITY GATE do sync (anti-wipe): aborta se planilha vazia (empty_sheet); aborta se export parcial (base>=50 linhas E planilha < 70% da base) para nao apagar a base por engano.",
+      "setembro = LISTA VIVA (delete fisico de quem sai) vs dashboard = LIVRO-RAZAO (nunca deleta; bi_atual distingue ativo de historico). Lineage compartilhado (sequencia comum + trigger mirror setembro->dashboard).",
+      "Idempotencia do sync: mesmo file_id+unidade ja 'completed' nao roda 2x; advisory lock serializa syncs da mesma unidade; backup pre-sync retido 14 dias + rollback manual (rollback_sync).",
+      "Regra Sapopemba (unit 78d18121-...): ignora linhas da planilha onde 'forma de pagamento' = 'CONCESSIONARIA ENERGIA'.",
+      "Cliente em conversa com a IA (cadence_branch_state != 'normal') NAO recebe disparo automatico (picker_select_batch so seleciona branch='normal').",
+      "[v3 MUST-FIX, achado de seguranca] Isolamento por unidade quebrado em setembro: policy SELECT com qual=true (PERMISSIVE, OR'd) permite que qualquer authenticated leia TODAS as unidades. v3 deve isolar leitura por unit_id de verdade.",
+      "[v3 MUST-FIX] Auditoria LGPD: blacklist_global nao gera trilha em event_log (so raw_evidence inline). Inclusao/remocao de numero deve ser auditada no v3.",
+      "[v3 MUST-FIX] fila_humana.updated_at congela no insert (sem trigger BEFORE UPDATE); nao acompanha atribuicao/resolucao. Corrigir no v3.",
+      "[estado atual, nao regra de dominio] O sync de inadimplentes esta em SIMULACAO: n8n active=false + DRY_RUN=true hardcoded; nada e gravado hoje."
+    ],
+    "notes": "CLASSIFICACAO DO NUCLEO (greenfield v3): o devedor e UMA entidade logica forkeada fisicamente em duas tabelas - clientes_cobranca_setembro (lista viva, delete fisico) e clientes_cobranca_dashboard (livro-razao + write-target primario de pagamento/reembolso/baixa). Lineage compartilhado provado: mesma sequencia de id + trigger mirror_disparo_fields espelhando setembro->dashboard por matricula. No v3: consolidar em uma entidade 'devedor'; pagamento/reembolso/baixa viram EVENTOS (o evento real ja existe em 'pagamentos', de onde os guards copiam); o espelho de cadence_* vira view/relatorio derivado, nao tabela.\n\nREFINAMENTO DO HINT: a tarefa sugere 'cadencia/regua/trilho = estado-coluna'. Isso e verdade para a forma LEGADA em setembro (cadence_fase 00/01, branch_state, slots - colunas espelhadas p/ dashboard). MAS o Motor v2 ja PROMOVEU o ciclo de cadencia a entidade de 1a classe (cliente_cadencia: ciclo_numero, append-only, lifecycle de status, FK-referenciada por disparos_log e fila_humana, 1-ativo-por-cliente). Por isso classifiquei cliente_cadencia como ENTIDADE (ciclo_cadencia), nao estado-coluna. v3 deve seguir a forma entidade e descartar a duplicacao estado-coluna.\n\n[INFERIDO] Nao da p/ settlar so com estes docs se setembro.cadence_* (advance_cadence_state/picker) e cliente_cadencia (motor_v2_*) sao duas geracoes do mesmo sistema ou um sistema transitorio coexistindo. Para o v3 e indiferente: consolidar no ciclo_cadencia (entidade). Nao explorei corpos de funcao motor_v2 alem do necessario.\n\nESCOPO: os 6 itens sao exatamente a minha lista. Tabelas de APOIO citadas apenas em state_machines/onde_vive_hoje (lane de outro sub-agente, nao duplicar como itens): pagamentos (evento de pagamento real), links_pagamentos_gerados (estado canonico do link), cadence_calendar (config matriz regua x dia x slot, RLS off, 262 linhas), gate_state (gate de saude->reguas por unidade), gate_config, spreadsheet_sync_log (estado do sync), cobranca_sync_backup (backup 14d), sync_snapshots (metricas diarias), disparos_log (log de disparos), phone_health/waba_health/waba_violations (saude que alimenta o gate).\n\nSOBREPOSICAO IMPORTANTE p/ o v3: fila_humana (handoff de cobranca do Motor v2) e o handoff do CHAT-CDT (conversations.routing ai/queued/human + chat_conversation_events) sao DOIS mecanismos de 'passar pra humano' que hoje vivem separados. Avaliar unificar 'caso/atendimento' no v3.\n\nDIVIDA TECNICA a NAO replicar no v3: dashboard com bloat severo (1793MB/95k linhas, ~19,6KB/linha) e 548MB de indices nunca usados; colunas com ESPACO no nome ('disparado com sucesso', 'forma de pagamento') que quebram ORMs; ~10 colunas legadas sem writer/reader (data_ultima_mensagem text vs _temp timestamptz divergentes, semana, numero_semana_1/2, franquia, resgate_link, data_resposta, cadence_variante, last_resgate_ia_at, last_disparo_at); indices duplicados em setembro (matricula e unit_id). Padronizar snake_case, normalizar e modelar limpo no v3.\""
+  },
+  {
+    "items": [
+      {
+        "object": "adimplentes_base",
+        "papel_real": "entidade",
+        "vira": "o MESMO cliente/filiado canonico (a entidade que tambem carrega o caso de cobranca, ex. v2 cobranca_casos estendido p/ filiado em qualquer trilho); NAO vira tabela 'adimplentes' propria. Os campos de relacionamento (bi_atual, last_relacionamento_at, last_relacionamento_template, relacionamento_opt_out, status, ultimo_pagamento) viram colunas/sub-dominio de relacionamento nessa entidade",
+        "evidencia": "adimplentes_base.md: chave de negocio UNIQUE(unit_id,matricula) identica a clientes_cobranca_setembro; route_inbound resolve UMA pessoa por norm_phone_br(telefone) cruzando AMBAS as tabelas (cobranca primeiro, senao filiado ativo aqui); motor_v2_relacionamento_get_disparos/_stats cruzam com clientes_cobranca_setembro via norm_phone_br para EXCLUIR inadimplentes -> o sistema enforce a exclusao mutua. 07-n8n.md secao 2: workflow Relacionamento identifica o cliente em adimplentes_base (mesmo wa_id/telefone que o de cobranca). 12-design-v2.md: cobranca_casos ja colapsa setembro+dashboard como mesmo objeto de negocio por matricula -> filiado em dia e a mesma pessoa no trilho oposto",
+        "atributos_chave": [
+          "unit_id",
+          "matricula",
+          "telefone",
+          "nome",
+          "bi_atual",
+          "last_relacionamento_at",
+          "last_relacionamento_template",
+          "relacionamento_opt_out"
+        ]
+      },
+      {
+        "object": "adimplentes_base.bi_atual",
+        "papel_real": "estado-coluna",
+        "vira": "coluna em cliente/filiado (presenca-no-ultimo-import = ativo no trilho relacionamento). Conceitualmente o mesmo que saida_at do nucleo de cobranca",
+        "evidencia": "adimplentes_base.md col 11: default true no upsert; motor_v2_adimplentes_finalize seta false para linhas fora do import_batch_id atual (quem saiu do ultimo XLSX); predicado de quase tudo (route_inbound, get_disparos, stats, indices parciais WHERE bi_atual). Analogo a 12-design-v2.md saida_at IS NULL = ativo",
+        "atributos_chave": [
+          "bi_atual",
+          "import_batch_id",
+          "imported_at"
+        ]
+      },
+      {
+        "object": "adimplentes_base.relacionamento_opt_out",
+        "papel_real": "estado-coluna",
+        "vira": "coluna em cliente/filiado (opt-out do trilho de relacionamento)",
+        "evidencia": "adimplentes_base.md col 16: isa_registrar_opt_out faz UPDATE ->true (one-way, so seta true), default false; motor_v2_relacionamento_get_disparos EXCLUI opt-out do sorteio. Escrita confirmada em functions-analysis",
+        "atributos_chave": [
+          "relacionamento_opt_out"
+        ]
+      },
+      {
+        "object": "adimplentes_base.last_relacionamento_at",
+        "papel_real": "estado-coluna",
+        "vira": "coluna em cliente/filiado (marca temporal do ultimo disparo de relacionamento; base do cooldown 7d)",
+        "evidencia": "adimplentes_base.md col 12: escrita por get_disparos/sortear apos disparo; lida por get_disparos (cooldown 7d) e stats (funil semanal); indices idx_adimplentes_base_unit_elegivel",
+        "atributos_chave": [
+          "last_relacionamento_at",
+          "last_relacionamento_template"
+        ]
+      },
+      {
+        "object": "adimplentes_base.raw_data",
+        "papel_real": "morta",
+        "vira": "descartar (nao recriar a coluna no v3; no maximo staging descartavel de import fora da entidade canonica)",
+        "evidencia": "adimplentes_base.md col 8 + Observacoes: jsonb com a linha bruta inteira do XLSX, ~1,56 KB/linha, DIRIGE os 234 MB de heap/TOAST, NENHUM leitor consome (so viaja em SELECT *). 11-plano-reorg.md sec 2.3: forte candidato a slim-down",
+        "atributos_chave": []
+      },
+      {
+        "object": "adimplentes_import_log",
+        "papel_real": "infra-auditoria",
+        "vira": "tabela propria de auditoria de import (low-cardinality, append-on-finalize). No v3 pode unificar com os demais *_sync_log/*_import_log num unico log de ingestao de planilha",
+        "evidencia": "adimplentes_import_log.md: 9 linhas, escrita exclusiva por motor_v2_adimplentes_finalize (1 linha por import: batch_id, unit_id, file_name, file_id_drive, rows_total/new/updated/removed, imported_at); nenhum reader programatico (lido out-of-band/dashboard). NAO e morta - e trilha de auditoria. Colunas error_message/raw_metadata sem writer no caminho de sucesso (provavel caminho de erro)",
+        "atributos_chave": [
+          "batch_id",
+          "unit_id",
+          "file_name",
+          "rows_total",
+          "rows_new",
+          "rows_updated",
+          "rows_removed",
+          "imported_at"
+        ]
+      },
+      {
+        "object": "sales_leads",
+        "papel_real": "entidade",
+        "vira": "tabela/entidade PROPRIA (ex. 'lead'/'prospect'), SEPARADA do cliente. Lead converte (vincula/vira) filiado no fechamento (data_fechamento/status ganho). NAO descartar",
+        "evidencia": "sales_leads.md: vazia/nunca usada POReM totalmente provisionada (PK uuid, 3 indices, trigger updated_at, RLS por papel app sales_agent, default cdt_code='ibirite001'); o proprio deep-dive se auto-corrige: 'feature planejada, NAO morta... rotulo correto e futuro/inativa'. Dominio APP (has_role/app_role/sales_agent), nao n8n. Funil: status/origem/valor_potencial + data_clique->data_interacao->data_fechamento. NAO tem matricula (ainda nao e cliente). FOCO DO DOMINIO v3 inclui Vendas/funil -> in-scope. (11-plano-reorg marca 'morta' MAS so no escopo de reorg do banco existente, nao greenfield)",
+        "atributos_chave": [
+          "name",
+          "email",
+          "whatsapp",
+          "status",
+          "origem",
+          "valor_potencial",
+          "data_clique",
+          "data_interacao",
+          "data_fechamento",
+          "observacoes",
+          "cdt_code"
+        ]
+      },
+      {
+        "object": "sales_leads.status",
+        "papel_real": "estado-coluna",
+        "vira": "coluna em lead (fase do funil de vendas)",
+        "evidencia": "sales_leads.md col 6: text livre, indice idx_sales_leads_status (idx_scan=0, nunca exercitado); funil de vendas inferido dos marcos temporais data_clique/data_interacao/data_fechamento",
+        "atributos_chave": [
+          "status"
+        ]
+      },
+      {
+        "object": "sales_leads.cdt_code",
+        "papel_real": "relacionamento",
+        "vira": "FK para units/unidade na entidade lead (hoje e texto livre com default 'ibirite001', sem FK formal)",
+        "evidencia": "sales_leads.md col 2 + Relacionamentos: cdt_code text NOT NULL default 'ibirite001', sem FK para units; vinculo multi-unidade por convencao de string. No v3 deve ser FK real para a unidade",
+        "atributos_chave": [
+          "cdt_code"
+        ]
+      }
+    ],
+    "state_machines": [
+      {
+        "nome": "Trilho de atendimento (cobranca <-> relacionamento)",
+        "estados": [
+          "inadimplente/cobranca (em clientes_cobranca_setembro, saida_at IS NULL)",
+          "adimplente/relacionamento (em adimplentes_base, bi_atual=true)"
+        ],
+        "transicoes": "Mutuamente exclusivos para a MESMA pessoa (mesma matricula+unit / mesmo telefone). Quem paga e sai da cobranca (saida_at/pagamento_feito) reaparece como adimplente no proximo import da planilha de adimplentes; quem deixa de pagar some do XLSX de adimplentes (bi_atual->false) e entra na planilha de inadimplentes (sync_cobranca_v2). route_inbound prioriza cobranca: se a pessoa esta em ambas por norm_phone_br, vai para o trilho de cobranca. As RPCs de relacionamento cruzam com clientes_cobranca_setembro para excluir quem esta inadimplente. Gatilhos: imports semanais (Sync Adimplentes a cada 15min / Sync Planilha Power BI v3) e pagamento.",
+        "onde_vive_hoje": "DUAS tabelas separadas (clientes_cobranca_setembro para cobranca; adimplentes_base para relacionamento), reconciliadas em runtime por route_inbound + motor_v2_relacionamento_* via norm_phone_br(telefone/whatsapp). Nao ha coluna 'trilho' unica hoje."
+      },
+      {
+        "nome": "bi_atual (presenca no ultimo import de adimplentes)",
+        "estados": [
+          "true (veio no batch de import atual = filiado em dia ativo)",
+          "false (saiu do ultimo XLSX = exclusao logica)"
+        ],
+        "transicoes": "true ao upsert (motor_v2_adimplentes_upsert, import_batch_id do batch). false quando motor_v2_adimplentes_finalize roda e a linha tem import_batch_id IS DISTINCT FROM p_batch_id (nao veio no batch atual). Gatilho: finalizacao do import semanal. Conceitualmente equivalente ao saida_at do nucleo de cobranca (presenca na planilha = ativo).",
+        "onde_vive_hoje": "adimplentes_base.bi_atual (boolean), escrito por motor_v2_adimplentes_upsert/_finalize; serve de predicado em indices parciais e em todas as RPCs de relacionamento."
+      },
+      {
+        "nome": "opt-out de relacionamento",
+        "estados": [
+          "false (recebe disparos de relacionamento)",
+          "true (nao recebe)"
+        ],
+        "transicoes": "Unidirecional false->true. isa_registrar_opt_out (SECURITY DEFINER, chamada pelo workflow CDT Relacionamento) faz UPDATE relacionamento_opt_out=true por telefone normalizado. Nao ha caminho que volte para false no corpus. motor_v2_relacionamento_get_disparos exclui opt-out do sorteio.",
+        "onde_vive_hoje": "adimplentes_base.relacionamento_opt_out (boolean default false)."
+      },
+      {
+        "nome": "Cooldown de relacionamento (7 dias)",
+        "estados": [
+          "elegivel (last_relacionamento_at NULL ou > 7 dias atras)",
+          "em cooldown (last_relacionamento_at <= 7 dias)"
+        ],
+        "transicoes": "Ao sortear/disparar, motor_v2_relacionamento_get_disparos grava last_relacionamento_at=now() e o template sorteado; a partir dai a pessoa fica inelegivel por 7 dias. Gatilho: disparo de relacionamento. Nao e estado armazenado como enum - e derivado da marca temporal.",
+        "onde_vive_hoje": "adimplentes_base.last_relacionamento_at (timestamptz) + logica de cooldown 7d dentro de get_disparos; indice idx_adimplentes_base_unit_elegivel(unit_id,last_relacionamento_at) WHERE bi_atual."
+      },
+      {
+        "nome": "Funil de vendas (lead/prospect)",
+        "estados": [
+          "status livre (texto): provavel novo/lead -> em contato -> ... -> fechado/ganho ou perdido (valores nao instanciados; tabela vazia)"
+        ],
+        "transicoes": "Marcos temporais sugerem o fluxo data_clique (entrada) -> data_interacao (engajamento) -> data_fechamento (conversao). INFERIDO: lead ganho converte em cliente/filiado. Nunca exercitada (0 linhas) -> transicoes nao observadas, apenas provisionadas.",
+        "onde_vive_hoje": "sales_leads.status (text) + data_clique/data_interacao/data_fechamento + valor_potencial. Dominio app (sales_agent), feature planejada e inativa."
+      }
+    ],
+    "regras_negocio": [
+      "Mutua exclusao de estado: a MESMA pessoa nao e simultaneamente inadimplente (cobranca) e adimplente (relacionamento). As RPCs de relacionamento (motor_v2_relacionamento_get_disparos/_stats) cruzam adimplentes_base com clientes_cobranca_setembro por norm_phone_br para EXCLUIR quem esta inadimplente; route_inbound prioriza o trilho de cobranca quando a pessoa aparece nos dois. (evidencia: adimplentes_base.md Leitores/Observacoes; 07-n8n.md secs 1,2,4)",
+      "Chave de negocio = matricula (+ unit_id): UNIQUE(unit_id, matricula) e a chave do ON CONFLICT do upsert em adimplentes_base, identica a de clientes_cobranca_setembro -> a mesma pessoa e a mesma matricula nos dois trilhos. O cruzamento operacional adicional e por telefone normalizado norm_phone_br. (adimplentes_base.md Relacionamentos)",
+      "Cooldown de 7 dias no relacionamento: apos um disparo de relacionamento (last_relacionamento_at), a pessoa fica inelegivel por 7 dias. (adimplentes_base.md col 12; motor_v2_relacionamento_get_disparos)",
+      "Opt-out suprime relacionamento e e irreversivel no corpus: relacionamento_opt_out=true (so seta true) exclui a pessoa de futuros disparos de relacionamento. (adimplentes_base.md col 16; isa_registrar_opt_out)",
+      "bi_atual = presenca no ultimo import: quem nao veio no XLSX mais recente de adimplentes vira bi_atual=false (exclusao logica), espelhando 'presenca na planilha = ativo' (mesmo padrao do saida_at/bi_atual do nucleo de cobranca). (adimplentes_base.md col 11; motor_v2_adimplentes_finalize)",
+      "Janela/escopo por unidade (multi-tenant): todo lookup, sorteio e funil sao por unit_id (FK->units). adimplentes_base sempre filtra por unit_id; sales_leads usa cdt_code (hoje string livre, deveria ser FK a unidade). (adimplentes_base.md, sales_leads.md)",
+      "Lead e nao-cliente que CONVERTE: sales_leads nao tem matricula (ainda nao e filiado); ao fechar (data_fechamento / status ganho) o lead vira/vincula um cliente-filiado. Entidade separada do cliente, dominio app (papel sales_agent). INFERIDO - tabela nunca exercitada. (sales_leads.md)",
+      "Import de adimplentes e idempotente por batch: motor_v2_adimplentes_upsert (INSERT ... ON CONFLICT (unit_id,matricula)) marca bi_atual=true no batch; motor_v2_adimplentes_finalize marca bi_atual=false em quem ficou fora do batch e grava 1 linha de auditoria em adimplentes_import_log. (adimplentes_base.md Pipeline; adimplentes_import_log.md)"
+    ],
+    "notes": "DECISOES centrais do dominio (confirmadas com o advisor): (1) adimplente NAO vira tabela propria - e o MESMO cliente/filiado, no trilho 'relacionamento', estado mutuamente exclusivo do trilho 'cobranca'. No v3 unifica-se na entidade canonica de cliente/filiado (a que tambem carrega o caso de cobranca do 12-design-v2 cobranca_casos, estendida para 'filiado em qualquer trilho'); o trilho vira coluna/estado, nao segunda tabela - preserva verdade-unica. (2) sales_leads vira ENTIDADE propria (lead/prospect), SEPARADA do cliente, que converte em filiado no fechamento. ATENCAO: 11-plano-reorg.md e o deep-dive marcam sales_leads como 'morta', MAS esse veredicto e do escopo de REORG do banco existente; a tarefa e GREENFIELD e o foco do dominio inclui explicitamente Vendas/funil -> sales_leads e in-scope e NAO deve ser descartada (o proprio deep-dive se auto-corrige: 'feature planejada, nao morta'). (3) adimplentes_import_log e infra-auditoria (nao morta, nao evento) - log de ingestao de baixa cardinalidade. CAVEATS: muito do estado de adimplentes_base e mantido FORA do Supabase por um servico Docker externo http://host.docker.internal:8100/adimplentes/sync (07-n8n.md sec 5) - o lineage n8n->RPC e inferido. ultimo_pagamento e status em adimplentes_base nao tem writer/reader conhecido (vestigiais). NAO aplicar a regra 'dinheiro em centavos' a sales_leads.valor_potencial - nada evidencia centavos ali (essa regra e do dominio cobranca/pagamentos). raw_data (jsonb) deve ser descartado no v3 (234 MB sem leitor)."
+  },
+  {
+    "items": [
+      {
+        "object": "pagamentos",
+        "papel_real": "evento",
+        "vira": "pagamentos (tabela própria, ledger append-mostly)",
+        "atributos_chave": [
+          "matricula",
+          "correlation_id",
+          "valor_cents",
+          "data_pagamento",
+          "forma_pagamento",
+          "gateway_charge_id",
+          "unit_id",
+          "regua",
+          "reembolso_realizado",
+          "baixa_realizada"
+        ],
+        "evidencia": "02-tabelas/pagamentos.md: writer central register_payment (SECURITY DEFINER, INSERT...ON CONFLICT correlation_id DO UPDATE), idempotente; 'Histórico completo e append-mostly de todos os pagamentos'; fonte das views *_mes_atual. valor em CENTAVOS (todos os readers /100, COMMENT 'reais' está errado — migration 0008). 22,6k linhas reais."
+      },
+      {
+        "object": "links_pagamentos_gerados",
+        "papel_real": "entidade",
+        "vira": "links_pagamento (tabela própria com ciclo de vida)",
+        "atributos_chave": [
+          "correlation_id",
+          "matricula",
+          "unit_id",
+          "link_pagamento",
+          "pix_copia_cola",
+          "pix_gateway",
+          "valor_cents",
+          "regua",
+          "status",
+          "cancelado_at",
+          "expires_at",
+          "gateway_charge_id",
+          "resgate_count"
+        ],
+        "evidencia": "02-tabelas/links_pagamentos_gerados.md: cada link/cobrança gerado para uma matrícula, com status (pending/paid/expired/cancelled) + cancelado_at (NULL=ativo), expires_at (default now()+7d), contadores de resgate. Writer upsert_payment_link por correlation_id. uniq_pending_link_per_matricula garante 1 pendente por matrícula/unidade. Ciclo próprio = entidade."
+      },
+      {
+        "object": "pagamentos_orfaos",
+        "papel_real": "evento",
+        "vira": "pagamentos_orfaos (tabela própria append-only de reconciliação)",
+        "atributos_chave": [
+          "source",
+          "gateway_correlation_id",
+          "gateway_charge_id",
+          "valor_cents",
+          "data_pagamento",
+          "payer_phone",
+          "payer_name",
+          "payer_taxid",
+          "matricula_informada",
+          "reconciliado",
+          "pagamento_id",
+          "matricula_reconciliada",
+          "motivo_descarte"
+        ],
+        "evidencia": "02-tabelas/pagamentos_orfaos.md: pagamento recebido (evento que aconteceu) cujo correlation_id não bate com link e telefone não resolve — gravado via upsert onConflict(source,gateway_correlation_id). FK pagamento_id->pagamentos.id (SET NULL). Resolvido por reconcile_orfao (vincula matrícula+pagamento) ou descartar_orfao. ~97 linhas. Lifecycle de reconciliação modelado como estado SOBRE o evento."
+      },
+      {
+        "object": "payment_gateway_configs",
+        "papel_real": "config-referencia",
+        "vira": "payment_gateway_configs (config própria, cofre de credenciais por unidade) — em v3 considerar Vault/criptografia",
+        "atributos_chave": [
+          "unit_id",
+          "platform",
+          "api_key",
+          "is_active",
+          "payout_pix_key",
+          "payout_pix_key_type",
+          "payout_enabled",
+          "api_key_v2"
+        ],
+        "evidencia": "02-tabelas/payment_gateway_configs.md: COMMENT 'Credenciais de API dos gateways de pagamento por franquia. Inserir manualmente via Dashboard'. Resolve api_key por (unit_id,platform,is_active) — lida por 8 edges. RLS deny-all + service_role (correto p/ segredo). Inclui config de payout PIX. Catálogo/config = config-referencia."
+      },
+      {
+        "object": "payouts",
+        "papel_real": "evento",
+        "vira": "payouts (tabela própria, repasses/saques PIX)",
+        "atributos_chave": [
+          "unit_id",
+          "platform",
+          "external_id",
+          "abacate_id",
+          "amount_cents",
+          "platform_fee_cents",
+          "pix_key",
+          "pix_key_type",
+          "status",
+          "receipt_url",
+          "error_message",
+          "completed_at"
+        ],
+        "evidencia": "02-tabelas/payouts.md: registro de repasse/saque PIX do saldo da franquia no Abacate. process-payouts insere PENDING antes do POST (idempotência via external_id UNIQUE), depois UPDATE status PENDING->COMPLETE/FAILED. amount_cents/platform_fee_cents em centavos. Heap vazio (feature nova). Evento de desembolso com SM de status."
+      },
+      {
+        "object": "payout_pagamentos",
+        "papel_real": "relacionamento",
+        "vira": "payout_pagamentos (tabela de junção payout<->pagamento)",
+        "atributos_chave": [
+          "payout_id",
+          "pagamento_id",
+          "valor_bruto_cents",
+          "valor_taxa_cents"
+        ],
+        "evidencia": "02-tabelas/payout_pagamentos.md: junção N:N degenerada — quais pagamentos PIX compõem cada payout. PK composta (payout_id,pagamento_id). FK payout_id->payouts.id (CASCADE), pagamento_id->pagamentos.id (RESTRICT). unique(pagamento_id) = cada charge em no máx 1 payout. valor_taxa_cents constante 80 (taxa fixa Abacate, hardcoded na RPC link_payout_charges)."
+      },
+      {
+        "object": "faturamento_baixas",
+        "papel_real": "evento",
+        "vira": "faturamento_baixas (tabela própria, livro-razão de baixas manuais) — FORA do escopo CHAT-CDT (owner em outro repo); avaliar se v3 gerencia",
+        "atributos_chave": [
+          "cliente_key",
+          "cliente_nome",
+          "negocio",
+          "mes_ref",
+          "tipo",
+          "valor_centavos",
+          "baixado_por",
+          "baixado_email",
+          "baixado_em"
+        ],
+        "evidencia": "02-tabelas/faturamento_baixas.md: 'baixas' de faturamento — marcações manuais de item quitado/baixado (pagamento fora do gateway, acordo, isenção) por cliente_key+mes_ref+tipo (unique). valor_centavos em centavos. RISCO: cliente_key sem FK (acoplamento por string); reversão = DELETE físico (sem soft-delete/audit). Bounded context distinto (outro repo)."
+      },
+      {
+        "object": "webhook_events_log",
+        "papel_real": "infra-auditoria",
+        "vira": "descartar como tabela própria — substituir por log unificado de webhooks no v3 (chat-cdt já tem chat_webhook_events; precisa de TTL/retenção)",
+        "atributos_chave": [
+          "source",
+          "event_type",
+          "correlation_id",
+          "unit_code",
+          "payload",
+          "processed",
+          "error",
+          "created_at"
+        ],
+        "evidencia": "02-tabelas/webhook_events_log.md + 06-edge-functions.md: audit log geral de webhooks de gateway (woovi/stripe/abacate) + eventos Meta via record_meta_account_event; 9 das 20 edges escrevem nela. Barramento de telemetria/idempotência/debounce. 53MB com ~43MB TOAST (payload jsonb), SEM TTL = crescimento ilimitado. RLS qual=true (vazamento). Infra-auditoria."
+      },
+      {
+        "object": "log_limpeza_links",
+        "papel_real": "infra-auditoria",
+        "vira": "descartar — telemetria write-only sem leitor; em v3 substituir por log de jobs/observabilidade estruturada",
+        "atributos_chave": [
+          "data_execucao",
+          "registros_atualizados",
+          "detalhe"
+        ],
+        "evidencia": "02-tabelas/log_limpeza_links.md: log do job limpar_links_pagamento_expirados (NULL em link/correlation de cobrança p/ links mortos), insere 1 linha com registros_atualizados+detalhe. WRITE-ONLY (nenhum leitor em func/edge/n8n/views/stat). Apenas 1 linha em toda a história. RLS OFF (dívida herdada). Não é morta (writer ativo) mas sem valor de leitura — descartar no greenfield."
+      }
+    ],
+    "state_machines": [
+      {
+        "nome": "Ciclo de vida do link de pagamento",
+        "estados": [
+          "pending (default na geração)",
+          "paid",
+          "expired",
+          "cancelled"
+        ],
+        "transicoes": "pending->paid via register_payment (webhook/reconcile confirma pagamento); pending->expired via cleanup_expired_links (expires_at < now, default 7 dias); pending->cancelled via (a) cancel_pending_links_on_payment quando pagamento_feito vira true na cobrança, (b) edge cancel-payment-links disparada por Database Webhook cancel_links_on_regua_valor_update AFTER UPDATE de regua/valor_inadimplente em clientes_cobranca_setembro (smart-reuse: se valor+régua mudam, cancela e gera novo). Coluna cancelado_at (NULL=ativo) é flag paralela a status.",
+        "onde_vive_hoje": "links_pagamentos_gerados.status (text default 'pending') + links_pagamentos_gerados.cancelado_at (timestamptz, NULL=ativo). Evidência: 02-tabelas/links_pagamentos_gerados.md col 11/19; 06-edge-functions.md A.3."
+      },
+      {
+        "nome": "Reembolso/estorno do pagamento",
+        "estados": [
+          "nao reembolsado (reembolso_realizado=false, default)",
+          "reembolsado (reembolso_realizado=true)"
+        ],
+        "transicoes": "false->true via mark_refund_by_correlation (SECURITY DEFINER) chamado por woovi-webhook (CHARGE_REFUNDED), stripe-webhook (charge.refunded/dispute.closed) e process-reembolso (reembolso manual admin/collections_agent). Grava reembolso_realizado_at/_by/_motivo. Transição one-way (não há reversão). Ao reembolsar, sai da arrecadação das views.",
+        "onde_vive_hoje": "pagamentos.reembolso_realizado (+ reembolso_realizado_at/_by/_motivo). Evidência: 02-tabelas/pagamentos.md col 14-17; 06-edge-functions.md E.1; 04-views.md estornos_mes_atual filtra =true, ganhos/cobranca filtram IS NOT TRUE."
+      },
+      {
+        "nome": "Baixa interna no sistema (conciliação)",
+        "estados": [
+          "sem baixa (baixa_realizada=false, default)",
+          "com baixa (baixa_realizada=true)"
+        ],
+        "transicoes": "false->true via UPDATE direto do App por PostgREST (WHERE id=$, calls=63), gravando baixa_realizada_at/_by. INDEPENDENTE do reembolso — é registro operacional interno de 'baixa no sistema', não devolução de dinheiro. Lida pelo chat_debtor_context (CHAT-CDT).",
+        "onde_vive_hoje": "pagamentos.baixa_realizada (+ baixa_realizada_at/_by). Evidência: 02-tabelas/pagamentos.md col 11-13; migration 0008."
+      },
+      {
+        "nome": "Reconciliação do pagamento órfão",
+        "estados": [
+          "pendente (reconciliado=false, default)",
+          "reconciliado (reconciliado=true, vinculado a matrícula+pagamento)",
+          "descartado (reconciliado=true via descartar_orfao, com motivo_descarte)"
+        ],
+        "transicoes": "pendente->reconciliado via reconcile_orfao (chama register_payment, grava pagamento_id, matricula_reconciliada, reconciliado_at/_by) — também auto_reconcile_orfaos (batch por telefone). pendente->descartado via descartar_orfao (grava motivo_descarte). INSERT do órfão dispara trg_orphan_email -> notify-orphan-email.",
+        "onde_vive_hoje": "pagamentos_orfaos.reconciliado (+ reconciliado_at/_by, pagamento_id, matricula_reconciliada, motivo_descarte). Evidência: 02-tabelas/pagamentos_orfaos.md col 12-17; 06-edge-functions.md B.1/H.2."
+      },
+      {
+        "nome": "Ciclo de vida do payout (repasse PIX)",
+        "estados": [
+          "PENDING (default, insert antes do POST à Abacate)",
+          "COMPLETE",
+          "FAILED"
+        ],
+        "transicoes": "PENDING->COMPLETE quando Abacate confirma saque (grava abacate_id, receipt_url, completed_at); ao virar COMPLETE, process-payouts chama link_payout_charges para popular payout_pagamentos com as charges da janela [payout anterior->atual]. PENDING->FAILED se o POST à Abacate falha (grava error_message). Idempotência por external_id (crypto.randomUUID + UNIQUE). Rate-limit Abacate 1/min.",
+        "onde_vive_hoje": "payouts.status (text default 'PENDING'). Evidência: 02-tabelas/payouts.md col 10; 06-edge-functions.md E.2."
+      }
+    ],
+    "regras_negocio": [
+      "Dinheiro em CENTAVOS: pagamentos.valor é numeric(10) mas armazena centavos (todos os readers /100); o COMMENT da coluna dizendo 'em reais' está ERRADO (migration 0008 confirma 'origem em centavos'). payouts (amount_cents/platform_fee_cents), payout_pagamentos (valor_*_cents) e faturamento_baixas (valor_centavos) já são integer-cents. No v3 usar integer cents consistente em todo o financeiro.",
+      "Idempotência por chave distinta por stream: pagamentos por correlation_id (UNIQUE parcial, ON CONFLICT no register_payment); pagamentos_orfaos por (source, gateway_correlation_id); payouts por external_id (UNIQUE). Cada stream tem sua própria dedup — preservar no v3.",
+      "1 link pendente por matrícula+unidade: índice parcial uniq_pending_link_per_matricula (unit_id, matricula) WHERE status='pending' AND cancelado_at IS NULL. Não pode haver dois links ativos simultâneos para a mesma matrícula na mesma unidade.",
+      "Cada charge/pagamento entra em no máximo 1 payout: unique(pagamento_id) em payout_pagamentos (arbiter ON CONFLICT DO NOTHING) + FK pagamento_id->pagamentos.id RESTRICT (não se pode apagar um pagamento já incluído num repasse).",
+      "Link expira em 7 dias por default (expires_at = now() + '7 days'); cleanup_expired_links marca status='expired' os pendentes vencidos.",
+      "Smart-reuse de link: reaproveita link ativo não-expirado se valor E régua iguais; se mudaram, cancela (cancelado_at + status='cancelled' via cancel-payment-links no DB Webhook de mudança de regua/valor) e gera novo. Régua e valor são gravados no link no momento da geração justamente para detectar mudança.",
+      "Guard de 48h contra pagamento recente: generate-payment-link retorna HTTP 409 se houve pagamento recente; guard de 30 dias para não sobrescrever correlation_id real. (06-edge-functions.md A.1)",
+      "Reembolso é one-way e exclui o pagamento da arrecadação: views ganhos_mes_atual/cobranca_diaria_mes_atual filtram reembolso_realizado IS NOT TRUE; estornos_mes_atual filtra =true. Não há reversão de reembolso.",
+      "Reembolso (dinheiro devolvido) e baixa_realizada (baixa interna no sistema) são estados INDEPENDENTES sobre o mesmo pagamento, com writers diferentes (mark_refund_by_correlation via gateway vs UPDATE PostgREST do app). Não conflar.",
+      "Taxa fixa de 80 centavos por charge no payout: valor_taxa_cents é constante 80 hardcoded na RPC link_payout_charges (FRAGILIDADE: se a taxa Abacate mudar, fica desatualizada — no v3 tornar configurável, ex.: em payment_gateway_configs).",
+      "Payout só ocorre por unidade com gateway Abacate ativo E payout_enabled=true (gate em payment_gateway_configs) E kill-switch global PAYOUTS_ENABLED. Insert do payout PENDING acontece ANTES do POST ao gateway (idempotência), marcado FAILED se o POST falhar.",
+      "Credenciais de gateway são por unidade/franquia (multi-tenant): resolvidas em payment_gateway_configs por (unit_id, platform, is_active), nunca de variáveis de ambiente globais. Tabela é deny-all (RLS sem policy) acessível só por service_role — tratar como cofre; no v3 considerar criptografia/Vault (hoje api_key em texto claro).",
+      "Pagamento que não resolve matrícula/unidade vira órfão (fallback): webhooks e reconcilers Stripe/Woovi/Abacate gravam em pagamentos_orfaos; a verdade financeira (valor recebido) não se perde — fica pendente de reconciliação manual/automática.",
+      "Caveat de qualidade de dado: em órfãos Stripe, data_pagamento = hora de ingestão (new Date().toISOString()), NÃO a hora real do pagamento (02-tabelas/pagamentos_orfaos.md; 06-edge-functions.md B.2). No v3 capturar a hora real do gateway.",
+      "Regra de comissão do dashboard (só nas views, não nas tabelas): ganhos_mes_atual/cobranca_diaria_mes_atual aplicam 10/9/8/7% sobre o valor PROJETADO nas faixas <=15000/<=30000/<=45000/acima; 6 unidades exception_codes (ibirite, pousoalegre001, cabofrio001, varginha001, trescoracoes001, portoalegre001) têm 7% fixo. Se o v3 gerenciar o dashboard financeiro, essa regra (e a lista de exceções) precisa ser modelada — idealmente como config, não hardcoded em view. (04-views.md)",
+      "webhook_events_log cresce sem limite (sem TTL, payload jsonb ~43MB TOAST): no v3 o log unificado de webhooks precisa de política de retenção/particionamento.",
+      "faturamento_baixas: chave do cliente é cliente_key TEXTO LIVRE sem FK (acoplamento frágil por string) e a reversão de uma baixa é DELETE físico (sem soft-delete nem auditoria de cancelamento). No v3, se gerenciado, usar FK real para a entidade cliente e soft-delete/audit."
+    ],
+    "notes": "DOMÍNIO FINANCEIRO — 9 objetos classificados. Núcleo do v3: pagamentos (ledger/verdade, evento) + links_pagamento (entidade com ciclo próprio) + pagamentos_orfaos (evento de pagamento não-vinculado) + payouts (evento de repasse) + payout_pagamentos (junção) + payment_gateway_configs (config/cofre). Dois logs (webhook_events_log, log_limpeza_links) são infra-auditoria a descartar/substituir.\n\n5 máquinas de estado identificadas, todas vivendo HOJE como colunas dentro das tabelas (não há enums dedicados; status/cancelado_at/reembolso_realizado/baixa_realizada/reconciliado são text/boolean). No v3 conviria promover status de link e status de payout a enums.\n\nPONTOS DE ATENÇÃO transversais (não bloqueiam, mas o v3 deve resolver): (1) valor em centavos com COMMENT enganoso em pagamentos; (2) RLS qual=true vaza payouts/órfãos/webhook_events_log entre franquias — no v3 escopar por unidade; (3) api_key em texto claro; (4) taxa de 80c hardcoded; (5) regra de comissão e lista de exception_codes hardcoded em view; (6) escrita de links fragmentada entre RPC upsert_payment_link e UPDATEs diretos via PostgREST das edges (dificulta auditoria) — no v3 centralizar mutação.\n\nESCOPO: faturamento_baixas pertence a OUTRO bounded context/repositório (tela de baixas de faturamento), acoplada por string sem FK — classificada como evento mas com ressalva de escopo; decidir se o v3 a absorve. Todas as 9 tabelas são do ecossistema n8n/cobrança, NENHUMA é do CHAT-CDT (confirmado: ausentes das migrations infra/supabase/migrations/, policies usam user_has_access_to_unit e não os helpers chat_*).\n\nLimitação: análise read-only sobre os deep-dives (02-tabelas/) + sínteses (06-edge-functions.md, 04-views.md); não houve acesso ao banco vivo. Estatísticas das tabelas estão cegas (last_analyze null em quase todas), então contagens de linha são proxies. Inferências marcadas no texto. Nenhuma exceção lançada.\""
+  },
+  {
+    "items": [
+      {
+        "object": "conversations",
+        "papel_real": "entidade",
+        "vira": "conversations (entidade própria — sessão de atendimento)",
+        "atributos_chave": [
+          "id",
+          "unit_id",
+          "contact_id",
+          "phone_number_id",
+          "status",
+          "routing",
+          "handoff_reason",
+          "assigned_operator_id",
+          "last_inbound_at",
+          "customer_window_expires_at",
+          "opened_at",
+          "queued_at",
+          "assigned_at",
+          "closed_at",
+          "closed_by",
+          "close_outcome",
+          "close_note"
+        ],
+        "evidencia": "02-tabelas/conversations.md: substantivo com identidade e ciclo de vida próprios; PK referenciada por messages.conversation_id e chat_conversation_events.conversation_id; coordena handoff via routing (ai/queued/human); índice parcial uniq_open_conv_per_contact (1 conversa aberta por contato). routing/status/handoff_reason/assigned_operator_id/close_outcome são estado-coluna nesta entidade (ver state_machines). priority é write-dead (sempre 0, sem writer). Drop candidates: priority sem uso real; índice conversations_assigned_operator_id_idx morto."
+      },
+      {
+        "object": "messages",
+        "papel_real": "evento",
+        "vira": "messages (tabela append-only de evento — thread de mensagens, FK→conversations)",
+        "atributos_chave": [
+          "id",
+          "conversation_id",
+          "wa_message_id",
+          "direction",
+          "type",
+          "payload",
+          "status",
+          "sent_by",
+          "operator_id",
+          "created_at"
+        ],
+        "evidencia": "02-tabelas/messages.md: histórico de toda mensagem (in/out) de cada conversa, ligado a conversation_id (FK ON DELETE CASCADE). Algo que ACONTECE e se repete no tempo. wa_message_id UNIQUE = idempotência. status (pending→sent→delivered→read/failed) é máquina de estado vivendo em messages.status. Trigger chat_bump_conversation_window (AFTER INSERT direction='in') renova janela 24h. error é lido só forense. Coluna error sem render/agregação. Writers: webhook Meta (in/customer), chat_record_outbound_message (ai/system), /messages/send (operator)."
+      },
+      {
+        "object": "contacts",
+        "papel_real": "entidade",
+        "vira": "contacts (entidade própria — pessoa/identidade WhatsApp, chave natural unit_id+wa_id)",
+        "atributos_chave": [
+          "id",
+          "unit_id",
+          "wa_id",
+          "name"
+        ],
+        "evidencia": "02-tabelas/contacts.md: diretório de contatos WhatsApp com chave natural (unit_id, wa_id); âncora de conversations.contact_id. profile (jsonb) e crm_external_id são designed-but-never-wired (sem writer/reader) — DROP candidates; o COMMENT prometia profile.matricula como vínculo ao débito mas 0013 resolveu nome/débito por match de telefone (chat_phone_match_key), não via profile. contacts.name foi demovido para fallback de display (0013 usa nome do dashboard de cobrança). Índice contacts_unit_id_wa_id_idx redundante (~272kB)."
+      },
+      {
+        "object": "chat_conversation_events",
+        "papel_real": "evento",
+        "vira": "chat_conversation_events (tabela append-only de evento — log de transições do ciclo de atendimento, FK→conversations)",
+        "atributos_chave": [
+          "id",
+          "conversation_id",
+          "event_type",
+          "actor_id",
+          "from_routing",
+          "to_routing",
+          "from_status",
+          "to_status",
+          "outcome",
+          "note",
+          "created_at"
+        ],
+        "evidencia": "02-tabelas/chat_conversation_events.md + 05-triggers.md: event-sourcing leve das transições de routing/status (queued, returned_to_ai, assigned/reassigned, closed). É evento de domínio (ciclo de vida da entidade conversa), não auditoria genérica — o enum do schema lista 'mudança de estado/handoff' como evento. Write-only HOJE (UI de timeline pendente) — provisionado, não morto. Escrito só pelo trigger chat_log_conversation_transition (AFTER UPDATE em conversations, SECURITY DEFINER). 3 índices secundários nunca usados (~72kB), aguardam a leitura da timeline."
+      },
+      {
+        "object": "chat_push_subscriptions",
+        "papel_real": "infra-auditoria",
+        "vira": "chat_push_subscriptions (infra de notificação — Web Push por usuário×device)",
+        "atributos_chave": [
+          "id",
+          "user_id",
+          "endpoint",
+          "p256dh",
+          "auth"
+        ],
+        "evidencia": "02-tabelas/chat_push_subscriptions.md: encanamento de Web Push (endpoint + chaves VAPID) por operador/device, para notificar handoff enfileirado. Escrito por /api/push/subscribe, lido por /api/internal/push/notify (fanout). Disparador é o trigger chat_notify_handoff em conversations (net.http_post). user_agent é write-only (telemetria latente). Alternativa defensável: pequena entidade; permanece tabela própria de qualquer forma."
+      },
+      {
+        "object": "chat_webhook_events",
+        "papel_real": "infra-auditoria",
+        "vira": "chat_webhook_events (infra-auditoria — caixa-preta de webhooks Meta, deny-all + purge 7 dias)",
+        "atributos_chave": [
+          "id",
+          "payload",
+          "received_at"
+        ],
+        "evidencia": "02-tabelas/chat_webhook_events.md: audit log bruto dos webhooks Meta para replay/depuração. RLS deny-all (using false), gravado só por service_role, purgado por pg_cron diário (>7 dias). app_event_id é coluna sem writer (sempre NULL) + índice _app_event_id_idx nunca usado (~192kB) — DROP candidates. Só persiste inbound real de cliente (descarta ~91% status updates). 19MB (acima da meta de 10MB do design 0004)."
+      },
+      {
+        "object": "message_log",
+        "papel_real": "evento",
+        "vira": "message_log (evento — log de envio outbound da régua de cobrança; tabela do n8n/cobrança, FORA do escopo do módulo de atendimento)",
+        "atributos_chave": [
+          "id",
+          "matricula",
+          "unit_id",
+          "wa_message_id",
+          "template_name",
+          "sent_at",
+          "status",
+          "failure_code",
+          "failure_reason",
+          "delivered_at",
+          "read_at",
+          "pricing_billable",
+          "pricing_category"
+        ],
+        "evidencia": "02-tabelas/message_log.md: auditoria 1-para-1 de cada envio outbound da régua de cobrança (~260k linhas). Evento append-mais-update (ciclo sent→delivered→read→failed via record_message_status, WHERE wa_message_id). UNIQUE(wa_message_id) parcial = idempotência. Tabela do n8n (CLAUDE.md: não alterar). cadence_* aqui são ecos da máquina de cadência que VIVE em cliente_cadencia/clientes_cobranca_setembro. Trigger sync_data_ultimo_disparo propaga sent_at para clientes_cobranca_*. NÃO é do domínio de atendimento humano — pertence à cobrança."
+      },
+      {
+        "object": "message_inbound",
+        "papel_real": "evento",
+        "vira": "message_inbound (evento — sink append-only de inbound para analytics; tabela do n8n/cobrança, FORA do escopo do módulo de atendimento)",
+        "atributos_chave": [
+          "id",
+          "wamid",
+          "from_phone",
+          "phone_number_id",
+          "unit_id",
+          "type",
+          "body",
+          "is_optout",
+          "received_at",
+          "raw_value"
+        ],
+        "evidencia": "02-tabelas/message_inbound.md + 07-n8n.md: 1 linha por mensagem recebida, para analytics (taxa de resposta humana, opt-out). Escrito por RPC record_inbound_message (fluxo inbound n8n, ON CONFLICT(wamid) DO NOTHING), lido só por rpc_inbound_summary (agrega unit_id/is_optout/received_at). Sink write-only: from_phone/phone_number_id/type/body/raw_value sem reader. wamid NULLABLE → buraco de dedup (NULL nunca conflita no índice único). unit_id sem FK física. Tabela do n8n — domínio cobrança/analytics, não atendimento."
+      }
+    ],
+    "state_machines": [
+      {
+        "nome": "routing (handoff IA↔humano)",
+        "estados": [
+          "ai",
+          "queued",
+          "human"
+        ],
+        "transicoes": "ai→queued: handoff disparado pela IA do n8n via edge agent-tools.transfer_human (SET routing='queued', handoff_reason) ou pela app. queued→human: operador assume (app server action actions.ts, SET assigned_operator_id=user.id). human→ai: operador devolve à IA (returned_to_ai, SET routing='ai', assigned_operator_id=null). queued→ai também possível (devolver sem assumir). Gatilhos de trigger: chat_stamp_conversation_transition (carimba queued_at/assigned_at), chat_log_conversation_transition (loga evento), chat_notify_handoff (push fanout em →queued).",
+        "onde_vive_hoje": "conversations.routing (USER-DEFINED chat_routing_state); estampas em queued_at/assigned_at; eventos espelhados em chat_conversation_events"
+      },
+      {
+        "nome": "status + desfecho da conversa (ciclo de atendimento)",
+        "estados": [
+          "open",
+          "closed"
+        ],
+        "transicoes": "open→closed: operador encerra (app actions.ts, SET status='closed', closed_at, closed_by=user.id, close_outcome, close_note). Trigger chat_stamp_conversation_transition carimba closed_at; chat_log_conversation_transition insere evento 'closed' copiando outcome/note. close_outcome ∈ {resolvido, nao_resolvido, fora_de_escopo, cliente_nao_respondeu} (enum chat_close_outcome). Bulk-close NÃO grava close_note.",
+        "onde_vive_hoje": "conversations.status (chat_conversation_status) + close_outcome (chat_close_outcome) + close_note + closed_at/closed_by"
+      },
+      {
+        "nome": "ciclo de atribuição do atendimento (event types)",
+        "estados": [
+          "queued",
+          "assigned",
+          "reassigned",
+          "returned_to_ai",
+          "closed"
+        ],
+        "transicoes": "Sequência típica: queued (handoff) → assigned (operador assume) → [reassigned (reatribuição a outro operador)] → returned_to_ai (devolver à IA) OU closed (encerrar com desfecho). Cada transição em conversations dispara INSERT em chat_conversation_events pelo trigger chat_log_conversation_transition (AFTER UPDATE WHEN routing/status/assigned_operator_id mudou).",
+        "onde_vive_hoje": "estampado em conversations (queued_at/assigned_at/closed_at, assigned_operator_id) + logado em chat_conversation_events.event_type (enum chat_conv_event_type)"
+      },
+      {
+        "nome": "entrega de mensagem (atendimento)",
+        "estados": [
+          "pending",
+          "sent",
+          "delivered",
+          "read",
+          "failed"
+        ],
+        "transicoes": "INSERT com default 'pending' (operador) ou 'sent' (RPC do n8n/ai). Webhook Meta atualiza via statuses[]: UPDATE messages SET status (+error) WHERE wa_message_id — write mais quente (~80k calls/janela). Idempotência por wa_message_id UNIQUE.",
+        "onde_vive_hoje": "messages.status (enum chat_message_status) + messages.error (jsonb, só forense)"
+      },
+      {
+        "nome": "entrega de mensagem (cobrança — paralela, domínio separado)",
+        "estados": [
+          "sent",
+          "delivered",
+          "read",
+          "failed"
+        ],
+        "transicoes": "INSERT default 'sent' (advance_cadence_state, com wa_message_id) ou via PostgREST (falhas terminais, sem wa_message_id). record_message_status faz UPDATE do ciclo localizando por wa_message_id (status, delivered_at, read_at, failed_at, pricing_*). Linhas sem wa_message_id (falhas) nunca recebem update. Pertence à cobrança/n8n, NÃO ao atendimento.",
+        "onde_vive_hoje": "message_log.status (text) + delivered_at/read_at/failed_at/status_updated_at"
+      },
+      {
+        "nome": "opt-out de relacionamento",
+        "estados": [
+          "false",
+          "true"
+        ],
+        "transicoes": "Detectado por regex sobre o body no INSERT do RPC record_inbound_message (is_optout pré-computado). A persistência do estado opt-out do filiado é feita em outra tabela (adimplentes_base via RPC isa_registrar_opt_out — fora desta lista, referência apenas). message_inbound.is_optout é o flag por mensagem para analytics.",
+        "onde_vive_hoje": "message_inbound.is_optout (boolean, default false); estado durável vive em adimplentes_base (fora do escopo)"
+      }
+    ],
+    "regras_negocio": [
+      "1 conversa aberta por contato: índice parcial uniq_open_conv_per_contact (contact_id) WHERE status='open' guarda contra corrida entre n8n e CHAT-CDT; webhook/RPC tratam 23505 com re-SELECT.",
+      "Janela 24h da Meta renovada automaticamente a cada inbound: trigger chat_bump_conversation_window (AFTER INSERT messages, direction='in') seta last_inbound_at=created_at e customer_window_expires_at=created_at+24h.",
+      "Handoff é coordenado SOMENTE por conversations.routing (ai/queued/human); a IA do n8n só faz UPDATE de routing (via edge agent-tools.transfer_human), nunca escreve status.",
+      "Gate ai_may_send: a IA é BLOQUEADA quando existe conversa aberta com routing in (queued, human); é PERMITIDA quando não há conversa aberta (true por padrão). Diverge do contrato original (04-n8n-contract) que super-bloquearia no caso sem-linha — a implementação real é a defensável.",
+      "Idempotência de mensagem por wa_message_id (atendimento, UNIQUE) e por wamid (inbound, ON CONFLICT). ATENÇÃO: message_inbound.wamid é NULLABLE → linhas com wamid NULL não deduplicam (buraco de dedup).",
+      "Dualidade contato vs cliente/devedor: contact = identidade WhatsApp (chave natural unit_id+wa_id); cliente/devedor vive em clientes_cobranca_* e é casado por MATCH DE TELEFONE em tempo de leitura (chat_phone_match_key, RPCs chat_debtor_context/chat_debtor_names) — NÃO há FK armazenada. matrícula é a chave da cobrança mas contacts NUNCA a armazena (profile.matricula projetado e nunca cabeado).",
+      "Operadores são auth.users, não public.profiles: assigned_operator_id, messages.operator_id, closed_by, chat_conversation_events.actor_id e chat_push_subscriptions.user_id apontam todos para auth.users(id). (RLS do operador navega auth.uid()→profiles→user_units via helper chat_user_has_unit.)",
+      "Multi-tenant por unidade (units): toda linha de conversas/contatos/mensagens é escopada por unit_id; RLS via chat_user_has_unit(unit_id). Service_role (webhook/n8n/RPCs SECURITY DEFINER) bypassa RLS.",
+      "Webhook Meta só persiste inbound real de cliente em chat_webhook_events (descarta ~91% status updates); retenção de 7 dias por pg_cron (janela de retry da Meta); leitura deny-all (caixa-preta).",
+      "Toda mensagem da conversa é append-only e renderizada por type/payload/direction/sent_by; sent_by ∈ {customer, operator, ai, system} identifica autoria no thread.",
+      "CONTEXTO CROSS-DOMÍNIO (não evidenciado nas 8 tabelas, marcar como referência): máquina de cadência (fase 00→01→02, dia_ciclo 1..22, slot, variante) vive em cliente_cadencia/clientes_cobranca_setembro; ciclos de pagamento/link/template e 'dinheiro em centavos' vivem em pagamentos/links_pagamentos_gerados/template_inventory — todos FORA desta lista; message_log apenas ecoa cadence_* e pricing_*."
+    ],
+    "notes": "ESCOPO (inferência): a lista mistura dois domínios. As 6 tabelas com prefixo chat_/sem-prefixo (conversations, messages, contacts, chat_conversation_events, chat_push_subscriptions, chat_webhook_events) são o NÚCLEO do módulo de atendimento humano (greenfield v3 deve gerenciá-las). message_log e message_inbound são tabelas VIVAS do n8n/cobrança (~260k / ~27k linhas) — NÃO descartar (estão em uso), mas pertencem ao domínio de cobrança, propriedade do n8n; o módulo de atendimento as TOCA apenas read-only (RPCs de relatório) e NÃO deve assumi-las como entidades próprias. CLAUDE.md proíbe alterar tabelas do n8n.\n\nENTIDADE-RAIZ AUSENTE DA LISTA: o tenant é public.units e o número/WABA é chat_phone_numbers→wabas; conversations.phone_number_id e unit_id apontam para elas. O v3 precisa dessas entidades, mas estão fora desta lista de 8.\n\nCONTRADIÇÕES doc↔banco relevantes: (1) contacts.profile.matricula e crm_external_id foram desenhados como vínculo ao débito mas NUNCA cabeados — o vínculo real é por match de telefone (migration 0013). (2) message_log COMMENT diz 'inbound fica no Chatwoot' — legado de comentário; não há Chatwoot; inbound real vive em message_inbound (n8n) e messages (CHAT-CDT). (3) chat_notify_handoff: CLAUDE.md diz depender de 2 GUCs (app.app_origin/app.cron_secret), mas a versão viva (0003) lê de chat_config(key,value) — corrigir doc. (4) message_inbound contagem: docs/03-database.md diz 11k, real ~27,5k.\n\nWRITE-ONLY / DESIGNED-BUT-UNWIRED (drop/revisar no v3): conversations.priority (sem writer), contacts.profile + crm_external_id + created_at (sem reader), chat_push_subscriptions.user_agent, chat_webhook_events.app_event_id (+ índice), message_inbound (5 colunas de conteúdo sem reader: from_phone/phone_number_id/type/body/raw_value), message_log (várias colunas de contexto sem reader: cadence_*, raw_response, etc).\n\nPROVISÃO PENDENTE: chat_conversation_events é write-only hoje (trigger escreve, nenhum reader) — provisionada para uma UI de timeline de atendimento ainda não construída; 3 índices secundários nunca usados aguardam essa leitura. É evento de domínio, NÃO morta.\n\nNão afirmei 'dinheiro em centavos' nem ciclos de pagamento/link/template como regra: nenhuma coluna das 8 tabelas os evidencia (marcados só como contexto cross-domínio)."
+  },
+  {
+    "items": [
+      {
+        "object": "wabas",
+        "papel_real": "entidade",
+        "vira": "waba",
+        "atributos_chave": [
+          "waba_id (Graph API, unique)",
+          "unit_id (FK->units, CASCADE)",
+          "business_id",
+          "name",
+          "created_at"
+        ],
+        "evidencia": "wabas.md: PK id (idx_scan=88931); waba_id unique (wabas_waba_id_key); unit_id FK->units ON DELETE CASCADE; destino de FK chat_phone_numbers.waba_id->wabas.id CASCADE. Cadeia phone_number_id->waba->unit resolvida no webhook (wabas!inner(unit_id)) e em chat_record_outbound_message (read [id,unit_id]). business_id e name SEM reader (rotulos do cadastro Meta) - marcar atributos, nao mortos. RLS chat_wabas_select=chat_user_has_unit(unit_id)."
+      },
+      {
+        "object": "chat_phone_numbers",
+        "papel_real": "entidade",
+        "vira": "phone_number (unificar com disparadores_whatsapp no v3)",
+        "atributos_chave": [
+          "phone_number_id (Graph API, unique)",
+          "waba_id (FK->wabas, CASCADE)",
+          "display_phone",
+          "created_at"
+        ],
+        "evidencia": "chat_phone_numbers.md: identidade=phone_number_id (Graph), unique (_phone_number_id_key idx_scan=93835) - chave de busca dominante do banco (webhook eq('phone_number_id'), RPC chat_record_outbound_message). waba_id FK->wabas.id CASCADE; destino de FK conversations.phone_number_id. display_phone=rotulo humano SEM reader. quality_rating SEM writer e SEM reader (placeholder p/ health da Meta) -> NAO virar coluna: estado atual de qualidade e DERIVADO do ultimo snapshot de phone_health (DISTINCT ON), nao armazenado na entidade."
+      },
+      {
+        "object": "disparadores_whatsapp",
+        "papel_real": "entidade",
+        "vira": "phone_number (merge com chat_phone_numbers) + decompor colunas",
+        "atributos_chave": [
+          "numero_telefone (unique) -> identidade da entidade",
+          "waba_id -> identidade",
+          "unit_id (FK->units) -> identidade",
+          "waba_token -> credencial/config",
+          "chatwoot_inbox_id/_token/_account_id -> config (token/account sem reader)",
+          "limite_diario -> config-referencia",
+          "ativo -> estado-coluna na entidade",
+          "disparos_sucesso_hoje + ultima_atualizacao_contador -> state-machine (cota diaria), NAO coluna",
+          "unidade (text) -> descartar (redundante com unit_id/units.name)"
+        ],
+        "evidencia": "disparadores_whatsapp.md: e a MESMA coisa do mundo real que chat_phone_numbers (numero WhatsApp de uma unidade), partido entre n8n e chat. Obs#6: phone_number_id da Graph NAO existe nesta tabela - foi por isso que o CHAT-CDT criou chat_phone_numbers (0001_init.sql l.37-38). numero_telefone unique (idx_disparadores_numero_telefone idx_scan=5812). ativo=filtro de quase todo reader do motor (WHERE ativo IS TRUE). disparos_sucesso_hoje: 9687 UPDATEs/janela sobre 21 linhas, incrementado por disparo e resetado diariamente comparando ultima_atualizacao_contador (sem trigger, logica n8n/edge); ORDER BY disparos_sucesso_hoje ASC para balancear (numero menos usado). limite_diario default 1000 (cap diario). chatwoot_inbox_token e chatwoot_account_id SEM consumidor (Chatwoot legado/parcial). unidade(text) coexiste com unit_id(uuid FK) mas sem reader por nome - redundante. RLS=has_role admin (gestao UI); trafego pesado via service_role/SECURITY DEFINER."
+      },
+      {
+        "object": "waba_health",
+        "papel_real": "evento",
+        "vira": "waba_health_snapshot (tabela append-only ligada a waba)",
+        "atributos_chave": [
+          "waba_id",
+          "unit_id (FK->units)",
+          "account_review_status",
+          "business_verification_status",
+          "health_status (jsonb)->can_send_message",
+          "name",
+          "observed_at"
+        ],
+        "evidencia": "waba_health.md: log historico/serie temporal de saude por WABA via polling Graph API. Writer unico record_waba_health_snapshot (SECURITY DEFINER, marker _source='graph_polling', 1014x na janela). Alimenta v_waba_health_current (DISTINCT ON(waba_id) ORDER BY observed_at DESC, extrai health_status->>'can_send_message'). Trigger trg_motor_v2_gate_from_waba_health AFTER INSERT -> motor_v2_recalc_gate (cross-table: recalcula o gate da unidade). status/country/currency/raw_response gravados SEM reader (nao mortos). FK unit_id->units. View custa ~3,15s (100% seq scan)."
+      },
+      {
+        "object": "phone_health",
+        "papel_real": "evento",
+        "vira": "phone_health_snapshot (tabela append-only ligada a phone_number)",
+        "atributos_chave": [
+          "phone_number_id",
+          "unit_id (FK->units)",
+          "quality_rating (GREEN/YELLOW/RED)",
+          "status",
+          "event (FLAGGED/UNFLAGGED/ONBOARDING)",
+          "current_limit",
+          "messaging_limit_tier",
+          "observed_at"
+        ],
+        "evidencia": "phone_health.md: log append-only de saude por phone_number_id, gravado por polling (record_phone_health_snapshot) E webhook (record_meta_account_event). quality_rating e a FONTE DE VERDADE da cor lida por motor_v2_recalc_gate (mapeia GREEN/YELLOW/RED) que dirige o gate de envio. Alimenta v_phone_health_current (DISTINCT ON snapshot) e rpc_phone_health_last_change (LAG p/ transicao). Trigger trg_motor_v2_gate_from_phone_health AFTER INSERT -> motor_v2_recalc_gate. SPLIT por fonte: event/current_limit so do webhook; messaging_limit_tier/code_verification_status so do polling -> metade das colunas nula conforme fonte. name_status/code_verification_status/messaging_limit_tier/raw_response sem reader. FK unit_id->units."
+      },
+      {
+        "object": "waba_capability",
+        "papel_real": "evento",
+        "vira": "waba_capability_snapshot (tabela append-only ligada a waba) - DORMANT, nao morta",
+        "atributos_chave": [
+          "waba_id",
+          "unit_id (SEM FK)",
+          "max_phone_numbers",
+          "max_daily_conversations",
+          "webhook_event_id",
+          "raw_value (jsonb)",
+          "observed_at"
+        ],
+        "evidencia": "waba_capability.md: VAZIA (n_tup_ins=0) MAS tem writer confirmado (record_meta_account_event ramo business_capability_update) E reader vivo (v_waba_capability_current, 229 chamadas) -> NAO e morta (rubrica: morta exige sem reader/writer). Classificacao Cobranca+dormant: o evento business_capability_update aparentemente nunca disparou no periodo. Snapshots de capacidade da WABA (tier max de numeros, limite de conversas diarias). SEM FK em unit_id (assimetria com phone_health/waba_health) e SEM trigger de gate. raw_value/webhook_event_id sem reader. id provavel IDENTITY (inferido)."
+      },
+      {
+        "object": "waba_violations",
+        "papel_real": "evento",
+        "vira": "waba_violation (tabela append-only de incidentes ligada a waba)",
+        "atributos_chave": [
+          "waba_id",
+          "unit_id (SEM FK)",
+          "event",
+          "violation_type",
+          "restriction_type",
+          "restriction_expires_at",
+          "ban_state",
+          "affected_phone_number",
+          "observed_at"
+        ],
+        "evidencia": "waba_violations.md: feed cronologico append-only de incidentes/violacoes de politica das WABAs, vindo do webhook account_update (record_meta_account_event). Praticamente vazia (1 evento) - esperado (violacoes sao raras); NAO morta (writer+reader ativos, 516 leituras). Alimenta v_waba_violations_recent (lista SEM dedup, ORDER BY observed_at DESC). Trigger trg_motor_v2_gate_from_waba_violations AFTER INSERT -> motor_v2_recalc_gate (uma violacao reavalia a saude de envio da unidade). SEM FK em unit_id (igual waba_capability; padrao: caminho webhook = sem FK, caminho polling = com FK). raw_value/webhook_event_id sem reader (raw_value=payload bruto p/ auditoria)."
+      }
+    ],
+    "state_machines": [
+      {
+        "nome": "Cor de qualidade do numero (phone quality color) - a maquina load-bearing",
+        "estados": [
+          "GREEN",
+          "YELLOW",
+          "RED",
+          "(eventos de qualidade) FLAGGED",
+          "UNFLAGGED",
+          "ONBOARDING"
+        ],
+        "transicoes": "Novos snapshots em phone_health.quality_rating definem a cor corrente (ultimo snapshot via DISTINCT ON). phone_health.event (webhook phone_number_quality_update) registra FLAGGED/UNFLAGGED/ONBOARDING. rpc_phone_health_last_change usa LAG(quality_rating) para detectar a transicao. motor_v2_recalc_gate mapeia GREEN/YELLOW/RED para decidir o gate de envio. Disparada por trigger trg_motor_v2_gate_from_phone_health AFTER INSERT.",
+        "onde_vive_hoje": "phone_health.quality_rating + phone_health.event + current_limit; consumida por motor_v2_recalc_gate (cross-table; a tabela do gate em si nao esta nesta lista) e por v_phone_health_current/rpc_phone_health_last_change"
+      },
+      {
+        "nome": "Cota diaria de disparo (daily dispatch quota) + balanceamento",
+        "estados": [
+          "0 ... limite_diario (default 1000)",
+          "ativo=true/false"
+        ],
+        "transicoes": "disparos_sucesso_hoje incrementado a cada disparo bem-sucedido (PostgREST UPDATE por id, 9687 calls/janela); reset diario comparando ultima_atualizacao_contador (sem trigger - logica no n8n/edge). Balanceamento: ORDER BY disparos_sucesso_hoje ASC WHERE unit_id AND ativo IS TRUE -> escolhe o numero ATIVO menos usado. Numero so e elegivel se ativo=true (e, no payload, waba_id IS NOT NULL AND waba_token IS NOT NULL).",
+        "onde_vive_hoje": "disparadores_whatsapp.disparos_sucesso_hoje, .ultima_atualizacao_contador, .limite_diario, .ativo"
+      },
+      {
+        "nome": "Saude da conta WABA (account health)",
+        "estados": [
+          "account_review_status (texto Meta)",
+          "business_verification_status (texto Meta)",
+          "can_send_message (true/false, de health_status jsonb)"
+        ],
+        "transicoes": "Polling da Graph API (record_waba_health_snapshot, marker _source='graph_polling') grava novo snapshot; estado corrente = ultimo por WABA (v_waba_health_current DISTINCT ON(waba_id) ORDER BY observed_at DESC). Inserir snapshot dispara trg_motor_v2_gate_from_waba_health -> motor_v2_recalc_gate.",
+        "onde_vive_hoje": "waba_health.account_review_status / business_verification_status / health_status(jsonb->can_send_message); view v_waba_health_current"
+      },
+      {
+        "nome": "Banimento / restricao da WABA (ban & restriction)",
+        "estados": [
+          "ban_state (texto Meta)",
+          "restriction_type",
+          "restriction_expires_at (timestamp)",
+          "violation_type",
+          "event (account_update)"
+        ],
+        "transicoes": "Webhook account_update da Meta (record_meta_account_event) registra cada incidente como linha append-only em waba_violations. Sem maquina de transicao formal - e feed cronologico (v_waba_violations_recent, sem dedup). restriction_expires_at marca quando a restricao expira. Inserir violacao dispara trg_motor_v2_gate_from_waba_violations -> motor_v2_recalc_gate (reavalia saude de envio da unidade).",
+        "onde_vive_hoje": "waba_violations.ban_state / restriction_type / restriction_expires_at / violation_type / event"
+      },
+      {
+        "nome": "Capacidade da WABA (capability) - dormant",
+        "estados": [
+          "max_phone_numbers",
+          "max_daily_conversations"
+        ],
+        "transicoes": "Webhook business_capability_update (record_meta_account_event ramo business_capability_update) gravaria novo snapshot; estado corrente = ultimo por WABA (v_waba_capability_current DISTINCT ON). Na pratica NUNCA disparou (waba_capability vazia, n_tup_ins=0). Sem trigger de gate (diferente das irmas). DORMANT.",
+        "onde_vive_hoje": "waba_capability.max_phone_numbers / max_daily_conversations (tabela vazia hoje)"
+      }
+    ],
+    "regras_negocio": [
+      "Cadeia de resolucao phone_number_id -> waba -> unit: todo inbound resolve a unidade via chat_phone_numbers.phone_number_id (Graph) -> wabas.waba_id -> wabas.unit_id. E a query DOMINANTE do banco (89.373 calls na janela). O modelo novo precisa manter essa resolucao barata.",
+      "Hierarquia de propriedade: waba e filha da unidade (unit_id FK->units ON DELETE CASCADE) e phone_number e filho da waba (waba_id FK->wabas ON DELETE CASCADE). Apagar a unidade apaga suas WABAs; apagar a WABA apaga seus numeros.",
+      "Unicidade das chaves naturais da Meta: waba_id e UNIQUE (wabas_waba_id_key) e phone_number_id e UNIQUE (chat_phone_numbers_phone_number_id_key); numero_telefone e UNIQUE em disparadores. Sao as chaves de upsert/lookup.",
+      "chat_phone_numbers (chat) e disparadores_whatsapp (n8n) representam a MESMA coisa do mundo real (um numero WhatsApp de uma unidade) partida entre dois sistemas - disparadores nao tem phone_number_id da Graph (por isso o chat criou a sua tabela). No v3 greenfield unificam em UMA entidade phone_number.",
+      "Estado corrente de saude/qualidade/capacidade NAO e coluna na entidade: e DERIVADO do ULTIMO snapshot do log (DISTINCT ON(chave) ORDER BY observed_at DESC). chat_phone_numbers.quality_rating e placeholder sem reader - a verdade vem de phone_health.",
+      "Cap diario de disparo + reset diario + balanceamento least-used: cada numero tem limite_diario (default 1000); disparos_sucesso_hoje conta o dia e reseta comparando ultima_atualizacao_contador; o motor escolhe o numero ATIVO com menor contador (ORDER BY disparos_sucesso_hoje ASC).",
+      "Elegibilidade para disparo: numero precisa de ativo=true (e, no payload Meta, waba_id IS NOT NULL AND waba_token IS NOT NULL).",
+      "Telemetria de saude e append-only (event/snapshot), nunca update-in-place: phone_health, waba_health, waba_capability e waba_violations sao logs historicos; o estado vivo se obtem pelo ultimo snapshot.",
+      "Inserir snapshot de saude OU violacao recalcula o gate da unidade: triggers trg_motor_v2_gate_from_phone_health / _waba_health / _waba_violations chamam motor_v2_recalc_gate (cross-table). waba_capability NAO dispara gate.",
+      "Split webhook-vs-polling na telemetria de numero: phone_health.event e current_limit so vem do webhook (record_meta_account_event); messaging_limit_tier e code_verification_status so vem do polling (record_phone_health_snapshot). Logo metade das colunas fica nula conforme a fonte do evento - o modelo novo deve aceitar snapshots parciais.",
+      "Assimetria de FK por caminho de escrita: tabelas de polling (phone_health, waba_health) tem FK unit_id->units; tabelas de webhook account_update/business_capability_update (waba_violations, waba_capability) NAO tem FK em unit_id. O v3 deve padronizar a FK em todas.",
+      "waba_capability esta vazia mas e DORMANT, nao morta: tem writer (ramo business_capability_update) e reader (v_waba_capability_current, 229 calls) - manter no modelo, mas o evento business_capability_update precisa ser habilitado no app Meta/n8n para popular."
+    ],
+    "notes": "Dominio: infra de comunicacao (Meta/WhatsApp), NAO do cliente. Hierarquia limpa do v3: unit -> waba (entidade) -> phone_number (entidade, unificando chat_phone_numbers + disparadores_whatsapp). Telemetria (phone_health, waba_health, waba_capability, waba_violations) = eventos append-only/snapshots ligados a phone_number ou waba; o estado corrente e sempre derivado (DISTINCT ON ultimo snapshot), nunca coluna na entidade.\n\nDecisao-chave (confirmada com advisor): waba_capability e EVENTO dormant (vazia mas com writer+reader vivos), NAO morta. Nenhuma das 4 tabelas de telemetria e infra-auditoria: elas alimentam o gate de envio (decisao de negocio via motor_v2_recalc_gate), logo sao eventos de dominio.\n\ndisparadores_whatsapp foi DECOMPOSTA: identidade (numero_telefone/waba_id/unit_id) -> entidade phone_number; waba_token/chatwoot_* -> credencial/config (chatwoot_token e account_id sem reader, semi-mortos); limite_diario -> config-referencia; ativo -> estado-coluna; disparos_sucesso_hoje+ultima_atualizacao_contador -> state-machine de cota diaria (nao coluna persistida burra); unidade(text) -> descartar (redundante com unit_id/units.name).\n\nPendencias herdadas a NAO carregar para o v3: pares de indices DESC/ASC redundantes em phone_health (~3,75MB ociosos) e waba_health (~3,41MB); tabelas health nunca analyze/vacuum (v_phone_health_current e v_waba_health_current custam ~3s/chamada por seq scan sobre ~20k linhas jsonb-pesadas) - o v3 deve materializar o snapshot corrente ou indexar corretamente. quality_rating em chat_phone_numbers e placeholder a remover/derivar.\n\nEscopo NAO importado (dominio financeiro/cobranca, fora desta tarefa): dinheiro em centavos, faixas de comissao (10/9/8/7%), exception_codes de unidades, janela 24h da Meta, routing ai/queued/human. As views v_*_current / v_*_recent / v_message_perf_24h sao n8n-owned (nenhuma e chat_) e servem so de evidencia de leitura - nao sao da minha lista.\n\nInferencias marcadas: id de waba_capability/waba_violations e provavel GENERATED IDENTITY (extracao nao traz is_identity); upstream das RPCs de health e n8n/cron+webhook Meta (grep edge/n8n vazio, apoiado por docs+marker _source='graph_polling'); webhook_event_id provavelmente -> webhook_events_log.id (sem FK fisica)."
+  },
+  {
+    "items": [
+      {
+        "object": "template_inventory",
+        "papel_real": "entidade",
+        "vira": "tabela própria no v3 (ex.: message_template) — filha de waba/unidade, chave de negócio (template_name, waba_id)",
+        "atributos_chave": [
+          "template_name",
+          "waba_id",
+          "unit_code",
+          "meta_template_id",
+          "category",
+          "status",
+          "quality_score",
+          "paused_by_sentinel",
+          "paused_at",
+          "paused_reason",
+          "rejection_reason",
+          "body_text",
+          "components(jsonb)",
+          "parent_template_inventory_id(self-FK)",
+          "sentinel_generation",
+          "submitted_to_meta_at",
+          "updated_at"
+        ],
+        "evidencia": "template_inventory.md: substantivo com identidade e ciclo de vida próprios; chave de negócio UNIQUE (template_name, waba_id) (idx template_inventory_template_name_waba_id_key, 6383 scans); self-FK parent_template_inventory_id (árvore de variações da Sentinela, sentinel_generation=profundidade); writers reais sentinel_apply_meta_event/sentinel_register_variation; readers motor_v2_pick_template, picker_select_batch, n8n Tatuapé (template_name+body_text). COMMENT: 'registro local dos templates submetidos, status atual, gate da Sentinela'. NÃO é do cliente — é filha de waba/unidade (waba_id+unit_code)."
+      },
+      {
+        "object": "template_status_log",
+        "papel_real": "evento",
+        "vira": "tabela append-only no v3 (ex.: message_template_status_event) ligada à entidade template por FK",
+        "atributos_chave": [
+          "template_name",
+          "status",
+          "previous_status",
+          "category",
+          "quality_score",
+          "changed_at",
+          "created_at(observed_at)"
+        ],
+        "evidencia": "template_status_log.md: 'Trilha de auditoria (append-only) das mudanças de status/categoria/qualidade'; registra status novo + previous_status + changed_at a cada evento; v_template_current consome via DISTINCT ON (template_name) ORDER BY changed_at DESC para derivar estado corrente; índice idx_template_status_name (template_name, changed_at DESC), 241 scans. Liga-se a template_inventory só por VALOR (template_name) — no v3 deve virar FK real. Writer externo (Sentinela/webhook Meta) não capturado. RLS aberta (qual=true, sem unit_code) — no v3 o evento precisa de escopo unidade/waba."
+      },
+      {
+        "object": "template_master",
+        "papel_real": "config-referencia",
+        "vira": "descartar (catálogo declarativo dormente; só recriar se v3 precisar catalogar templates por posição de cadência)",
+        "atributos_chave": [
+          "template_name(PK)",
+          "category",
+          "language",
+          "fase",
+          "dia_ciclo",
+          "slot",
+          "variante",
+          "components(jsonb)",
+          "metadata(jsonb)",
+          "pause_after_submit"
+        ],
+        "evidencia": "template_master.md: 'catálogo declarativo de templates por posição na cadência' (fase/dia_ciclo/slot/variante → components Meta); PK=template_name, índice (fase,dia_ciclo,slot). DORMENTE: seq_scan=0 e idx_scan=0, n_tup_ins=0, nenhum reader/writer em functions/edge/n8n/views/pg_stat_statements; linhas_estimadas=-1 = nunca analisada (não provar vazio). RLS OFF (alerta governança). Provavelmente superada por template_inventory (estado real) + cadence_calendar/cadence_slot_config (posicionamento). É config-referencia por papel, mas descartável por estar sem consumidor e redundante. INFERÊNCIA: descarte; manter só se v3 quiser seed/source-of-truth de submissão por posição de régua."
+      }
+    ],
+    "state_machines": [
+      {
+        "nome": "Status de aprovação Meta do template",
+        "estados": [
+          "SUBMETIDO/PENDING (inferido)",
+          "APPROVED (inferido)",
+          "REJECTED (confirmado via rejection_reason)",
+          "PAUSED (inferido)"
+        ],
+        "transicoes": "Transição dirigida por eventos de webhook Meta aplicados por sentinel_apply_meta_event (UPDATE status, category, quality_score, rejection_reason quando event=REJECTED; append em meta_event_history). Cada transição é registrada em template_status_log (status novo + previous_status + changed_at). v_template_current deriva o estado corrente via DISTINCT ON (template_name) ORDER BY changed_at DESC. INFERÊNCIA: nomes exatos dos estados não confirmados nos deep-dives — só REJECTED é evidenciado; APPROVED/PENDING/PAUSED inferidos. Submissão inicial via edge fn sentinel-submit-template (POST Meta Graph message_templates) que retorna meta_template_id/meta_status/meta_category.",
+        "onde_vive_hoje": "template_inventory.status (estado corrente espelhado) + template_status_log (histórico de transições). Aplicado por sentinel_apply_meta_event; submissão por edge fn sentinel-submit-template."
+      },
+      {
+        "nome": "Categoria do template (recategorização Meta)",
+        "estados": [
+          "UTILITY (confirmado — default sentinel-submit-template, FILTER v_template_health)",
+          "MARKETING (confirmado — FILTER v_template_health, gatilho de variação)"
+        ],
+        "transicoes": "A Meta pode recategorizar UTILITY→MARKETING; sentinel_apply_meta_event atualiza template_inventory.category. Recategorização para MARKETING (ou rejeição/pausa/quality RED) é o GATILHO da geração de variação UTILITY pela edge fn sentinel-generate-variation (Sonnet gera, Opus revisa em loop até max_iterations 1..3). v_template_health quebra contagem por UTILITY vs MARKETING.",
+        "onde_vive_hoje": "template_inventory.category; também registrada em template_status_log.category. Lógica de variação em edge fn sentinel-generate-variation (stateless, não toca DB)."
+      },
+      {
+        "nome": "Quality score do template",
+        "estados": [
+          "GREEN (inferido)",
+          "YELLOW (inferido)",
+          "RED (inferido — gatilho de variação)"
+        ],
+        "transicoes": "quality_score atualizado por sentinel_apply_meta_event a partir de eventos Meta. Quality RED é um dos gatilhos da geração de variação (sentinel-generate-variation). v_template_current expõe quality_score puxado de template_inventory (NÃO do status_log — template_status_log.quality_score não tem reader). INFERÊNCIA: valores GREEN/YELLOW/RED inferidos; não confirmados literalmente nos deep-dives (tipo text).",
+        "onde_vive_hoje": "template_inventory.quality_score (fonte de verdade lida pela view); template_status_log.quality_score gravado mas sem reader identificado."
+      },
+      {
+        "nome": "Pausa pela Sentinela (gate CDT-side, DISTINTO do status Meta)",
+        "estados": [
+          "ativo (paused_by_sentinel=false, default)",
+          "pausado (paused_by_sentinel=true)"
+        ],
+        "transicoes": "sentinel_apply_meta_event seta paused_by_sentinel=true + paused_at + paused_reason quando detecta template problemático. É um booleano SEPARADO do status Meta — não confundir com PAUSED da Meta. É lido pelo dispatch real: motor_v2_pick_template / picker_select_batch / motor_v2_relacionamento_get_disparos filtram WHERE status=APPROVED AND paused_by_sentinel=false. ATENÇÃO: este é o gate EFETIVO de cadência (junto com status), NÃO is_active_in_cadence.",
+        "onde_vive_hoje": "template_inventory.paused_by_sentinel + paused_at + paused_reason. Setado por sentinel_apply_meta_event."
+      },
+      {
+        "nome": "Árvore de variações da Sentinela (linhagem de geração)",
+        "estados": [
+          "geração 0 (original, parent NULL)",
+          "geração N>0 (variação, parent aponta para template-pai)"
+        ],
+        "transicoes": "sentinel_register_variation faz UPSERT ON CONFLICT (template_name, waba_id) gravando parent_template_inventory_id + sentinel_generation (incrementado). sentinel_apply_meta_event percorre a árvore via WITH RECURSIVE como guardrail anti-loop por profundidade de chain. Variação é gerada por sentinel-generate-variation e submetida por sentinel-submit-template. INVARIANTE: chain de variações limitada por profundidade (anti-loop).",
+        "onde_vive_hoje": "template_inventory.parent_template_inventory_id (self-FK) + sentinel_generation. Lógica em sentinel_register_variation + sentinel_apply_meta_event (RECURSIVE)."
+      }
+    ],
+    "regras_negocio": [
+      "GATE DE DISPATCH REAL (alta prioridade no v3): um template só é elegível para disparo quando status=APPROVED (inferido) AND paused_by_sentinel=false. Confirmado em motor_v2_pick_template, picker_select_batch, motor_v2_relacionamento_get_disparos — todos filtram por status + paused_by_sentinel.",
+      "NÃO replicar is_active_in_cadence no v3: o COMMENT da coluna afirma 'SOMENTE este flag determina se o motor de cadência usa o template', mas NENHUMA função de cadência o lê — o índice idx_template_inventory_active_cadence tem idx_scan=0. É flag escrita-mas-morta. O v3 deve codificar o gate REAL (status+paused_by_sentinel), não o flag documentado-mas-inútil.",
+      "Identidade do template = (template_name, waba_id), NÃO só template_name: a chave de negócio é o par único (idx template_inventory_template_name_waba_id_key, sustenta o ON CONFLICT do upsert). O mesmo nome pode existir em WABAs diferentes. template_master usa template_name como PK isolado — divergência a corrigir no v3.",
+      "Template é entidade COMPARTILHADA filha de waba/unidade, NUNCA do cliente: pertence a waba_id (+ unit_code), é disparável para muitos clientes. Acoplamento ao motor de cobrança é por VALOR (waba_id+template_name), não por FK.",
+      "Duas semânticas distintas de 'pausado' que o v3 NÃO deve fundir: (a) status da Meta (REJECTED/PAUSED) e (b) paused_by_sentinel (gate CDT-side com paused_at/paused_reason). São duas máquinas separadas; a dica de domínio 'submetido→aprovado/rejeitado/pausado' as confunde.",
+      "Recategorização MARKETING (ou rejeição/pausa/quality RED) DISPARA geração automática de variação UTILITY: sentinel-generate-variation (Sonnet gera + Opus revisa, loop max_iterations clamp 1..3 default 2) → sentinel-submit-template submete à Meta. v3 deve suportar esse fluxo de auto-variação.",
+      "Linhagem de variações limitada por profundidade (anti-loop): sentinel_apply_meta_event percorre WITH RECURSIVE a árvore parent_template_inventory_id como guardrail. Variação encadeada não pode crescer indefinidamente.",
+      "Histórico de status é append-only e separado do estado corrente: template_status_log nunca atualiza linhas — só insere; o estado 'agora' é derivado por DISTINCT ON (template_name) ORDER BY changed_at DESC (view v_template_current). v3 deve manter event-sourcing do status.",
+      "quality_score corrente vem de template_inventory, NÃO do log: v_template_current puxa quality_score de template_inventory (mais recente por updated_at), embora template_status_log também tenha a coluna (que fica sem reader). Evitar fonte-dupla no v3.",
+      "Categoria default na submissão é UTILITY e idioma pt_BR: sentinel-submit-template envia category=UTILITY, language=pt_BR por default; auto-injeta example.body_text/header_text quando há variáveis {{N}} sem amostras.",
+      "Escopo de leitura por unidade (RLS): template_inventory restringe SELECT por user_can_read_unit_code(unit_code); mas template_status_log tem policy qual=true (acesso aberto a qualquer autenticado, sem unit_code) — inconsistência. No v3, o evento de status precisa de unit_code/waba_id para ser escopável por unidade.",
+      "components (estrutura Meta do template) é jsonb e é o que o motor usa para montar o payload de disparo (motor_v2_get_disparos / motor_v2_relacionamento_get_disparos). Hoje é populado por UPDATE ad-hoc via PAT (não por função) — no v3 deve ter writer formal (vir da resposta da submissão Meta)."
+    ],
+    "notes": "DOMÍNIO: Templates de mensagem WhatsApp — entidade compartilhada filha de waba/unidade (NÃO do cliente). template_inventory=ENTIDADE (espelho de estado + gate da Sentinela + árvore de variações via self-FK); template_status_log=EVENTO (append-only de transições de status, derivado em estado corrente por v_template_current); template_master=CONFIG-REFERENCIA DORMENTE recomendada a DESCARTAR (catálogo por posição de cadência sem nenhum consumidor, 0 scans, provavelmente superado por template_inventory+cadence_calendar). DONO: todas n8n/Sentinela; CHAT-CDT trata template_inventory como read-only (RLS unit-scoped) e consome o estado via views v_template_current/v_template_health. CHAVE DE NEGÓCIO: (template_name, waba_id) — no v3 a ligação status_log↔inventory (hoje só por valor) deve virar FK real. ACHADO CRÍTICO p/ v3: is_active_in_cadence é flag escrita-mas-morta (idx_scan=0, sem reader); o gate efetivo é status=APPROVED AND paused_by_sentinel=false. DUAS PAUSAS distintas (status Meta PAUSED vs paused_by_sentinel boolean CDT-side). INFERÊNCIAS marcadas: valores de status APPROVED/PENDING/PAUSED e de quality GREEN/YELLOW/RED não confirmados literalmente nos deep-dives (colunas tipo text) — só REJECTED, UTILITY, MARKETING têm evidência direta. As MÁQUINAS DE ESTADO de cadência (régua/dia_ciclo 1..22/fase) NÃO vivem nestas tabelas — vivem em cliente_cadencia/cadence_calendar (fora desta lista); o fase/dia_ciclo/slot de template_master é só POSICIONAMENTO de config, não state machine de template. Smell de segurança herdado: sentinel_apply_meta_event/sentinel_register_variation são SECURITY DEFINER sem SET search_path; template_status_log com RLS qual=true (vazamento cross-unit de histórico). Edge fns Sentinel (generate-variation, submit-template) são 100% stateless — não tocam estas tabelas; quem persiste é o par sentinel_apply_meta_event/sentinel_register_variation (writers reais) e um UPDATE ad-hoc de components via PAT."
+  },
+  {
+    "items": [
+      {
+        "object": "disparos_log",
+        "papel_real": "evento",
+        "vira": "disparo (tabela append-only própria; 1 linha por mensagem programada/enviada ligada a cliente_cadencia + unit)",
+        "evidencia": "02-tabelas/disparos_log.md: 'uma linha por mensagem programada/enviada'; FKs disparos_log.unit_id→units.id e cliente_cadencia_id→cliente_cadencia.id; status default 'PROGRAMADA' com transições PROGRAMADA→ENVIADA→ENTREGUE/LIDA|FALHOU|PULADA; índice único parcial idx_disparos_log_wa_id (idempotência do webhook); 06-edge-functions.md D.1 motor-v2-planejador faz insert/delete e D.2 sortear faz insert. O ciclo de vida do status é capturado em state_machines, não confunde a classificação de evento.",
+        "atributos_chave": [
+          "unit_id (FK)",
+          "cliente_cadencia_id (FK)",
+          "matricula",
+          "telefone",
+          "trilho (cobranca|relacionamento)",
+          "regua",
+          "dia_ciclo",
+          "slot_index",
+          "action_type",
+          "intensity",
+          "template_pool_tag",
+          "template_name",
+          "phone_number_id",
+          "health_color_no_envio (snapshot)",
+          "status",
+          "scheduled_for",
+          "sent_at",
+          "delivered_at",
+          "read_at",
+          "failed_at",
+          "failure_code",
+          "wa_message_id (idempotência)",
+          "correlation_id"
+        ]
+      },
+      {
+        "object": "cadence_calendar",
+        "papel_real": "config-referencia",
+        "vira": "cadence_calendar (tabela de config própria; matriz régua×dia_ciclo×slot do Motor v2)",
+        "evidencia": "02-tabelas/cadence_calendar.md: 'encoding da planilha Estratégia CDT', 262 linhas, UNIQUE (regua,dia_ciclo,slot_index), índice quente (6483 scans), RLS OFF; lida por 06-edge-functions.md D.1 motor-v2-planejador e 03-funcoes.md motor_v2_get_disparos (filtra action_type != PAUSA/NONE). Sem writer dinâmico (n_tup_*=0). FONTE do trilho régua/slot_index (Motor v2) — ver nota two-engine.",
+        "atributos_chave": [
+          "regua",
+          "dia_ciclo",
+          "slot_index",
+          "action_type",
+          "intensity",
+          "template_pool_tag"
+        ]
+      },
+      {
+        "object": "cadence_slot_config",
+        "papel_real": "config-referencia",
+        "vira": "cadence_slot_config (tabela de config própria; janelas horárias dos slots — trilho fase/slot Strategic Swarm F1)",
+        "evidencia": "02-tabelas/cadence_slot_config.md: 'config-as-data dos slots de cadência', 17 linhas, UNIQUE (fase,dia_ciclo,slot), RLS OFF, lida por 03-funcoes.md picker_select_batch (compara now() BRT entre janela_inicio/fim, escolhe pool LIKE) e advance_cadence_state (envios_no_dia). Sem writer dinâmico. FONTE do trilho fase/slot (Strategic Swarm F1) — engine paralelo ao cadence_calendar, ver nota two-engine. Índice idx_cadence_slot_config_janela ocioso (candidato a drop).",
+        "atributos_chave": [
+          "fase",
+          "dia_ciclo",
+          "slot",
+          "janela_inicio (BRT)",
+          "janela_fim (BRT)",
+          "template_pool_like",
+          "envios_no_dia"
+        ]
+      },
+      {
+        "object": "gate_state",
+        "papel_real": "estado-coluna",
+        "vira": "tabela 1:1 com unit (gate_state — PK=unit_id, ~1 linha/unidade, estado corrente computado; histórico vive em event_log GATE_STATE_*). Alternativa: colunas em unit",
+        "evidencia": "02-tabelas/gate_state.md: PK=unit_id, 13 linhas (~1/unidade), FK unit_id→units.id, n_tup_upd=2016 (upsert por motor_v2_recalc_gate); trigger trg_event_log_gate_state grava histórico em event_log. É estado corrente por-unidade (não global): health_color_efetivo seleciona reguas_efetivas que o planejador usa. Cluster coeso de ~8 campos computados → modelar como bloco 1:1 com a entidade unit.",
+        "atributos_chave": [
+          "unit_id (PK/FK)",
+          "health_color_calc",
+          "health_color_override",
+          "health_color_efetivo",
+          "reguas_efetivas (array)",
+          "relacionamento_ratio",
+          "worst_phone_id",
+          "last_evaluated_at"
+        ]
+      },
+      {
+        "object": "gate_config",
+        "papel_real": "config-referencia",
+        "vira": "gate_config (tabela de política própria; PK=health_color → réguas ativas + ratio)",
+        "evidencia": "02-tabelas/gate_config.md: 'políticas do gate', PK natural health_color (texto, sem id), ~3-4 cores, RLS OFF; lida por 03-funcoes.md motor_v2_recalc_gate (match por cor → gate_state.reguas_efetivas/relacionamento_ratio) e 06-edge-functions.md D.1 planejador. idx_scan=2016 pareado com gate_state (mesmo loop por unidade). Sem writer dinâmico — edição manual de política.",
+        "atributos_chave": [
+          "health_color (PK)",
+          "reguas_ativas (array)",
+          "relacionamento_ratio"
+        ]
+      },
+      {
+        "object": "system_state",
+        "papel_real": "config-referencia",
+        "vira": "system_state (store key-value de flags/kill-switches globais; v3 pode manter key-value jsonb OU promover a colunas tipadas num settings singleton)",
+        "evidencia": "02-tabelas/system_state.md: 'kill switches e flags globais', tabela key→value jsonb, PK=key (idx_scan=4860, mais quente da lista); kill switch cadence_enabled/motor_v2_enabled e overrides motor_v2_gate_override_color / motor_v2_reguas_override. Lida por 03-funcoes.md motor_v2_recalc_gate e pelas 3 edges motor-v2 (checam flags antes de agir). Escrita por operador via SQL direto. NÃO é estado de uma entidade (é do sistema inteiro) → config, não estado-coluna.",
+        "atributos_chave": [
+          "key (PK)",
+          "value (jsonb)",
+          "updated_by",
+          "updated_at"
+        ]
+      },
+      {
+        "object": "agents",
+        "papel_real": "config-referencia",
+        "vira": "agents (catálogo de prompts de IA próprio; v3 deve OWNAR — domínio é orquestração do Motor; adicionar versionamento de prompt)",
+        "evidencia": "02-tabelas/agents.md: catálogo de personas/prompts LLM, PK natural name (ex.: rafa_tt cobrança, isa_tt relacionamento), 13 linhas, lida MUITO em produção (3296+688 calls PostgREST por name) pelos workflows n8n via service_role; RLS policy admin-only 'Only admins can access agents'. NÃO é morta (só agents_bak_* é backup). Coluna unidade sem leitor. Risco: 27 edições in-place de prompt sem histórico/versionamento (só backups pontuais).",
+        "atributos_chave": [
+          "name (PK)",
+          "prompt",
+          "unidade"
+        ]
+      },
+      {
+        "object": "data_freshness_log",
+        "papel_real": "infra-auditoria",
+        "vira": "data_freshness_log (telemetria/heartbeat própria, append-only; v3 deve ADICIONAR TTL e um leitor/alerta — hoje é write-only)",
+        "evidencia": "02-tabelas/data_freshness_log.md: heartbeat de frescor, escrita exclusiva por check_data_freshness (cron 15min, 5 linhas/exec, status ok/stale/no_data por fonte em horário comercial BRT) — 03-funcoes.md seção 4. NÃO é morta (writer ativo) mas SEM leitor programático (idx de leitura source,checked_at idx_scan=0) e SEM TTL (~480 linhas/dia) → a 'detecção de parada silenciosa' prometida no COMMENT não está fiada em nenhum consumidor capturado. RLS OFF.",
+        "atributos_chave": [
+          "source",
+          "checked_at",
+          "last_write",
+          "age_minutes",
+          "status (ok|stale|no_data)"
+        ]
+      },
+      {
+        "object": "event_log",
+        "papel_real": "infra-auditoria",
+        "vira": "event_log (auditoria universal append-only, própria; particionar por tempo. LOAD-BEARING: é a base de uma TIMELINE do cliente/unidade, não só audit)",
+        "evidencia": "02-tabelas/event_log.md: log universal append-only (n_tup_upd=0/del=0), ~42k linhas/49MB, escrita centralizada por log_event (RPC, valida actor_type IN HUMAN/AUTOMATION/SYSTEM/EXTERNAL) + trg_log_event_changes (genérico, before/after via to_jsonb) + triggers motor_v2 — 03-funcoes.md seção 9. Encadeamento causal via auto-FK parent_event_id; correlação via correlation_id; soft-refs cliente_id/entity_id/unit_id → permitem reconstruir timeline por cliente. RLS ON + 0 policies = default-deny (só service_role/secdef). Retenção 90d hot + S3 (COMMENT, não implementado). Sem reader programático (consumo out-of-band: dashboards forenses).",
+        "atributos_chave": [
+          "occurred_at",
+          "actor_type (HUMAN|AUTOMATION|SYSTEM|EXTERNAL)",
+          "actor_id",
+          "event_type",
+          "entity_type",
+          "entity_id",
+          "source_system",
+          "correlation_id",
+          "parent_event_id (auto-FK causal)",
+          "unit_id (soft-ref)",
+          "cliente_id (soft-ref)",
+          "before_data (jsonb)",
+          "after_data (jsonb)",
+          "metadata (jsonb)"
+        ]
+      }
+    ],
+    "state_machines": [
+      {
+        "nome": "Ciclo de vida do disparo (mensagem WhatsApp programada/enviada)",
+        "estados": [
+          "PROGRAMADA",
+          "ENVIADA",
+          "ENTREGUE",
+          "LIDA",
+          "FALHOU",
+          "PULADA"
+        ],
+        "transicoes": "PROGRAMADA criada pelo planejador (insert do plano do dia, scheduled_for::date=hoje). PROGRAMADA→ENVIADA (sender externo, preenche sent_at + wa_message_id). ENVIADA→ENTREGUE→LIDA (webhook Meta, delivered_at/read_at). qualquer→FALHOU (webhook Meta, failed_at + failure_code/reason). PROGRAMADA→PULADA via motor_v2_cancel_future_disparos quando o cliente é bloqueado. Idempotência das transições garantida pelo índice único parcial idx_disparos_log_wa_id (wa_message_id).",
+        "onde_vive_hoje": "disparos_log.status (default PROGRAMADA); transições por motor-v2-planejador (insert), sender externo/webhook Meta (não capturado no corpus) e motor_v2_cancel_future_disparos (→PULADA)"
+      },
+      {
+        "nome": "Gate de saúde por unidade (health color → réguas liberadas)",
+        "estados": [
+          "GREEN",
+          "YELLOW",
+          "RED (cores de health_color; valores exatos inferidos do padrão phone_health)"
+        ],
+        "transicoes": "motor_v2_recalc_gate calcula health_color_calc a partir de phone_health; aplica override de system_state (motor_v2_gate_override_color) → health_color_efetivo (override vence calc). A cor efetiva faz match em gate_config.health_color → resolve reguas_ativas/relacionamento_ratio, com cap de réguas via system_state (motor_v2_reguas_override) → grava gate_state.reguas_efetivas/relacionamento_ratio. O planejador só dispara réguas presentes em reguas_efetivas. Recálculo disparado por trg_motor_v2_recalc_gate_from_health ao chegar snapshot de health, ou pelo gate_consumer.py externo.",
+        "onde_vive_hoje": "gate_state (estado efetivo por unit_id) + gate_config (política por cor) + system_state (overrides/cap); driver motor_v2_recalc_gate; histórico em event_log (GATE_STATE_*)"
+      },
+      {
+        "nome": "Progressão da cadência de cobrança (régua × dia_ciclo × slot)",
+        "estados": [
+          "ACTIVE",
+          "PAUSED_REGUA_MORTA",
+          "PAGO (status de cliente_cadencia)",
+          "fases/dias: dia_ciclo 1..21, finalização no dia 22"
+        ],
+        "transicoes": "motor-v2-planejador faz seed de novas cadencias (entrou_em, dia_ciclo inicial) sincronizando com clientes_cobranca_setembro. motor_v2_avancar_dia incrementa dia_ciclo+1 (ACTIVE/PAUSED_REGUA_MORTA não avançadas na data). Pagamento → status=PAGO (register_payment / fallback de fechamento). Bloqueio → cadência pausada (trg_motor_v2_bloqueio_cliente). motor_v2_finalizar_dia22 finaliza quem passou do dia 21 sem pagar e enfileira em fila_humana com motivo FINALIZOU_21D. Cada combinação (regua,dia_ciclo,slot_index) é resolvida em cadence_calendar para action_type/intensity/pool. NOTA: existe um SEGUNDO encoder (fase,dia_ciclo,slot) em cadence_slot_config consumido por advance_cadence_state/picker_select_batch — engine 'Strategic Swarm F1' paralelo (ver regras/notes).",
+        "onde_vive_hoje": "cliente_cadencia.status/dia_ciclo/regua (entidade FORA da minha lista — coluna de estado); CODIFICADA por cadence_calendar (Motor v2) e cadence_slot_config (Strategic Swarm F1); drivers motor_v2_avancar_dia, motor_v2_finalizar_dia22, advance_cadence_state"
+      },
+      {
+        "nome": "Kill switch / feature flags do motor",
+        "estados": [
+          "enabled (true)",
+          "disabled (false)"
+        ],
+        "transicoes": "Flag flipa por operador via SQL direto (UPDATE system_state SET value WHERE key). As 3 edges motor-v2 (planejador/sortear/fechamento) leem system_state no início e fazem no-op se cadence_enabled/motor_v2_enabled=false. Chave de negócio: key (cadence_enabled, motor_v2_enabled, motor_v2_gate_override_color, motor_v2_reguas_override).",
+        "onde_vive_hoje": "system_state (key→value jsonb)"
+      },
+      {
+        "nome": "Entrega da mensagem (status Meta) — sub-máquina do disparo",
+        "estados": [
+          "sent",
+          "delivered",
+          "read",
+          "failed"
+        ],
+        "transicoes": "Espelha a parte externa do ciclo do disparo: sender preenche sent_at; webhook Meta preenche delivered_at, read_at ou failed_at+failure_code. Os mesmos timestamps existem em disparos_log; é a fonte dos campos sent_at..read_at. (No fluxo Strategic Swarm o equivalente é record_message_status sobre message_log.)",
+        "onde_vive_hoje": "disparos_log (sent_at/delivered_at/read_at/failed_at) via webhook Meta; análogo em message_log via record_message_status"
+      }
+    ],
+    "regras_negocio": [
+      "Kill switch global: se system_state.key='cadence_enabled' (ou 'motor_v2_enabled') = false, as 3 edges do Motor v2 (planejador, sortear-relacionamento, fechamento) viram no-op — leem system_state ANTES de qualquer ação (02-tabelas/system_state.md; 06-edge-functions.md D).",
+      "Cliente bloqueado ⇒ todos os disparos PROGRAMADA futuros daquela matrícula/unidade viram PULADA (motor_v2_cancel_future_disparos, chamado por trg_motor_v2_bloqueio_cliente).",
+      "Cadência roda do dia_ciclo 1 ao 21; ao passar do dia 21 sem pagamento, motor_v2_finalizar_dia22 finaliza e envia o cliente à fila humana com motivo FINALIZOU_21D (03-funcoes.md seção 2).",
+      "Volume de relacionamento: N adimplentes sorteados = round(gate_state.relacionamento_ratio × inadimplentes únicos contactados no slot 1), só adimplentes elegíveis, com cooldown de 7 dias (last_relacionamento_at) — 06-edge-functions.md D.2.",
+      "Gate de saúde: health_color_override vence health_color_calc para formar health_color_efetivo; a cor efetiva determina QUAIS réguas estão ativas (gate_config.reguas_ativas → gate_state.reguas_efetivas) e o planejador só dispara réguas em reguas_efetivas (02-tabelas/gate_state.md, gate_config.md).",
+      "Override de réguas (cap): system_state.key='motor_v2_reguas_override' limita as réguas efetivas no recalc do gate (02-tabelas/system_state.md).",
+      "event_log é IMUTÁVEL (nenhum UPDATE/DELETE, n_tup_upd=0/del=0); escrita só via log_event/triggers SECURITY DEFINER; actor_type restrito a {HUMAN, AUTOMATION, SYSTEM, EXTERNAL}; encadeamento causal via parent_event_id; retenção 90d hot + arquivo S3 (não implementada ainda).",
+      "Timeline do cliente: event_log permite reconstruir a história por cliente/unidade via cliente_id/entity_id/unit_id (soft-refs) + correlation_id + cadeia parent_event_id — é product feature, não só auditoria.",
+      "Idempotência do disparo: garantida pelo índice único parcial em wa_message_id (idx_disparos_log_wa_id) — webhook não duplica transição de status (02-tabelas/disparos_log.md).",
+      "Snapshot de auditoria no envio: disparos_log grava health_color_no_envio (cor do gate no momento) e phone_number_id usados — preserva a decisão histórica mesmo que o gate mude depois.",
+      "Plano do dia = SELECT disparos_log WHERE scheduled_for::date = today; modo 'replay' do planejador faz DELETE das PROGRAMADA do dia/unidade antes do re-INSERT (idempotência do plano) — 06-edge-functions.md D.1.",
+      "Janelas de envio respeitam horário comercial America/Sao_Paulo: cadence_slot_config.janela_inicio/janela_fim comparadas com now() AT TIME ZONE 'America/Sao_Paulo'; check_data_freshness também usa horário comercial BRT (02-tabelas/cadence_slot_config.md; data_freshness_log.md).",
+      "Dinheiro em centavos em todo o domínio (ex.: get_regua_totals divide por 100; payouts em *_cents) — manter a convenção no v3 (03-funcoes.md).",
+      "DOIS engines de cadência coexistem hoje e precisam ser CONSOLIDADOS no v3: trilho (regua, slot_index) via cadence_calendar + motor-v2-planejador → disparos_log/cliente_cadencia ('Motor v2'); e trilho (fase, slot) via cadence_slot_config + picker_select_batch/advance_cadence_state → message_log/clientes_cobranca_setembro ('Strategic Swarm F1'). São duas codificações da mesma estratégia de cobrança (02-tabelas/cadence_calendar.md vs cadence_slot_config.md).",
+      "Prompts de IA (agents) são fonte de verdade de produção lida pelo n8n por 'name' (string mágica: rafa_tt, isa_tt) mas vivem só no banco, sem versionamento — 27 edições in-place sem histórico; v3 deve adicionar versionamento e desacoplar do literal de nome (02-tabelas/agents.md).",
+      "data_freshness_log é write-only: sem TTL (cresce ~480 linhas/dia) e sem leitor/alerta programático — a 'detecção de parada silenciosa' do COMMENT não está conectada a nada; v3 deve adicionar retenção + consumidor de alerta."
+    ],
+    "notes": "DOMÍNIO: Orquestração do Motor v2 + auditoria. Nenhum dos 9 objetos é 'morta' (todos têm writer e/ou reader vivos no snapshot; apenas agents_bak_* — fora da lista — é backup). Classificação final: 1 evento (disparos_log), 4 config-referencia (cadence_calendar, cadence_slot_config, gate_config, system_state, agents = na verdade 5 config), 1 estado-coluna 1:1 (gate_state), 2 infra-auditoria (event_log, data_freshness_log).\n\nDISCRIMINADORES-CHAVE aplicados: (a) gate_state é estado POR-UNIDADE (PK=unit_id, 1 linha/unit) — modelado como bloco 1:1 com a entidade unit, NÃO 'estado global'; (b) system_state é flag do SISTEMA INTEIRO (não de uma entidade) → config-referencia/kill-switch store, NÃO estado-coluna; (c) agents é catálogo lido 3296×/janela em produção → config-referencia que o v3 deve ownar, NÃO morta; (d) event_log é load-bearing para TIMELINE do cliente (parent_event_id/cliente_id/correlation_id), não só audit; (e) data_freshness_log é infra ativa mas write-only/sem-TTL.\n\nFLAG PRINCIPAL PARA O V3 (fácil de suavizar no self-check): existem DOIS motores de cadência coexistindo — régua/slot_index (cadence_calendar → Motor v2) e fase/slot (cadence_slot_config → Strategic Swarm F1) — duas codificações da MESMA estratégia de cobrança que precisam ser unificadas, senão o v3 herda a divergência.\n\nESCOPO: a entidade dona da máquina de progressão da cadência (cliente_cadencia.status/dia_ciclo) está FORA da minha lista de 9; só a referencio como onde_vive. Máquinas de template/link de pagamento pertencem a outras listas — não fabriquei. Confiança: tudo confirmado nos deep-dives + síntese (06/03), exceto valores exatos das cores do gate (GREEN/YELLOW/RED inferidos do padrão phone_health) e os writers do webhook/sender de disparos_log (marcados como inferidos no próprio deep-dive — gap de lineage do corpus, provável n8n fora do snapshot)."
+  },
+  {
+    "items": [
+      {
+        "object": "public.units",
+        "papel_real": "entidade",
+        "vira": "tabela própria: unit (tenant)",
+        "evidencia": "units.md: tabela-tenant de toda a plataforma; CLAUDE.md 'Tenant = public.units'; é raiz (0 FKs de saída) com 28 FKs de entrada apontando para units.id; PK quente (idx_scan 288k). 08-dependencias.md §1.3/4.4: hub de referência com 38 readers.",
+        "atributos_chave": [
+          "id",
+          "name",
+          "code"
+        ]
+      },
+      {
+        "object": "public.profiles",
+        "papel_real": "entidade",
+        "vira": "tabela própria: operador (operator)",
+        "evidencia": "profiles.md: identidade aplicacional do operador (CLAUDE.md 'Operador = public.profiles'); espelha auth.users (FK user_id→auth.users.id CASCADE); pivô da cadeia RLS auth.uid()→profiles.user_id→profiles.id→user_units. name é o rótulo humano em toda a UI/relatório. INFERÊNCIA: gap de ordinal pos-4 = coluna droppada (provável unit_id antigo, modelo 1:1 substituído por user_units N:N).",
+        "atributos_chave": [
+          "id",
+          "user_id (= auth.users.id)",
+          "name",
+          "is_active"
+        ]
+      },
+      {
+        "object": "public.user_units",
+        "papel_real": "relacionamento",
+        "vira": "vínculo operador↔unidade unificado (junção operador_unidade) — MESMA tabela que user_unit_permissions colapsa no v3",
+        "evidencia": "user_units.md: N:N (user_id, unit_id) PK composta; user_id→profiles.id (CASCADE), unit_id→units.id (CASCADE). Fonte do escopo do inbox CHAT-CDT via chat_my_units/chat_user_has_unit. INFERÊNCIA de unificação: convive com user_unit_permissions (mesmo papel operador↔unidade, chave divergente) — candidato a unificação no v3.",
+        "atributos_chave": [
+          "user_id (= profiles.id)",
+          "unit_id"
+        ]
+      },
+      {
+        "object": "public.user_unit_permissions",
+        "papel_real": "relacionamento",
+        "vira": "vínculo operador↔unidade unificado (MESMA junção que user_units) + atributo permission",
+        "evidencia": "user_unit_permissions.md: (user_id, unit_id, permission) único; user_id→auth.users.id (≠ user_units que usa profiles.id); permission é enum permission_type; is_active=false faz soft-revoke. Base da RLS de cobrança/relatórios (idx_scan 730k — saudável). INFERÊNCIA: no v3 vira o mesmo vínculo operador↔unidade que user_units, com permission/role como coluna; granted_by/granted_at viram auditoria opcional.",
+        "atributos_chave": [
+          "user_id (= auth.users.id)",
+          "unit_id",
+          "permission",
+          "is_active"
+        ]
+      },
+      {
+        "object": "public.user_roles",
+        "papel_real": "relacionamento",
+        "vira": "junção operador↔papel (user_role) — papel global; enum app_role é o catálogo (config-referencia)",
+        "evidencia": "user_roles.md: (user_id, role) único, user_id→auth.users.id (CASCADE); role do enum app_role (admin/collections_agent/user/sales_agent). Fonte do admin gate via has_role. INFERÊNCIA de modelagem: o único (user_id,role) PERMITE multi-papel; se o v3 assumir papel único por operador, vira coluna 'role' em operador — escolha a explicitar. Mantido como relacionamento por respeitar o multi-papel atual.",
+        "atributos_chave": [
+          "user_id (= auth.users.id)",
+          "role (enum app_role)"
+        ]
+      },
+      {
+        "object": "public.spreadsheet_sync_log",
+        "papel_real": "infra-auditoria",
+        "vira": "descartar para o chat v3 — MANTER apenas se o v3 assumir o backend do /upload (import de inadimplentes)",
+        "evidencia": "spreadsheet_sync_log.md: cabeçalho/log de cada execução do sync de planilha (sync_cobranca_v2); status processing→final; é tabela-pai (FK de backup/removidos/snapshots). Dono = n8n/cobrança, sem migration no repo. INFERÊNCIA condicional: a tela /upload é frontend-only (backend pendente, feature CHAT-CDT real); se o v3 implementar esse import, este log (status/idempotência por file_id) torna-se relevante; senão, descartar (esfera n8n, não tocar).",
+        "atributos_chave": [
+          "id",
+          "file_id",
+          "status",
+          "records_in_sheet",
+          "records_created",
+          "records_updated",
+          "records_deleted",
+          "records_skipped"
+        ]
+      },
+      {
+        "object": "public.cobranca_sync_backup",
+        "papel_real": "infra-auditoria",
+        "vira": "descartar para o chat v3 (infra transiente de rollback do sync n8n) — NÃO é morta",
+        "evidencia": "cobranca_sync_backup.md: foto pré-sync reversível (row_data jsonb da linha do devedor) lida por rollback_sync; transiente (prune por created_at). n_live_tup=0 NÃO é vazia (linhas_estimadas≈9203). É load-bearing para rollback. ACHADO DE SEGURANÇA: RLS OFF + PII completa do devedor (10-seguranca.md A1). Esfera cobrança/n8n — descartar no chat v3.",
+        "atributos_chave": [
+          "sync_log_id",
+          "unit_id",
+          "source_table",
+          "row_data (jsonb)",
+          "created_at"
+        ]
+      },
+      {
+        "object": "public.sync_snapshots",
+        "papel_real": "infra-auditoria",
+        "vira": "descartar para o chat v3 (snapshot diário de métricas de cobrança do n8n) — NÃO é morta nem transiente",
+        "evidencia": "sync_snapshots.md: 1 linha por (unit_id, snapshot_date) com resumo agregado do dia de sync; PERSISTE histórico (sync_cobranca_v2 lê v_prev para deltas). Correção da dica: NÃO é truncada/transiente. RLS OFF (10-seguranca.md A1). Write-only analytics sem reader de relatório hoje. Esfera cobrança — descartar no chat v3.",
+        "atributos_chave": [
+          "unit_id",
+          "snapshot_date",
+          "total_clientes",
+          "valor_total",
+          "entradas",
+          "saidas",
+          "sync_log_id"
+        ]
+      },
+      {
+        "object": "public.app_internal_config",
+        "papel_real": "config-referencia",
+        "vira": "descartar para o chat v3 (cofre de segredos da cobrança/edge functions)",
+        "evidencia": "app_internal_config.md: KV store de segredos internos (ex.: NOTIFY_ORPHAN_INTERNAL_KEY) lido por call_reconcile_function/notify_orphan_payment_created (SECURITY DEFINER). Esfera cobrança, sem prefixo chat_. RLS ON + 0 policies = deny-all (cofre). No v3 de chat, segredos análogos vivem em chat_config — descartar este.",
+        "atributos_chave": [
+          "key",
+          "value"
+        ]
+      },
+      {
+        "object": "public.chat_config",
+        "papel_real": "config-referencia",
+        "vira": "tabela própria: chat_config (KV de configuração do push/handoff)",
+        "evidencia": "chat_config.md: KV (key,value) que substitui os GUCs app.app_origin/app.cron_secret (Supabase Cloud bloqueia ALTER DATABASE SET); lido por chat_notify_handoff para o push fanout. Prefixo chat_, criada em migration 0003. CONTRADIÇÃO doc↔banco: CLAUDE.md ainda cita 'GUCs no banco' — desatualizado (0003 trocou GUC pela tabela).",
+        "atributos_chave": [
+          "key",
+          "value"
+        ]
+      },
+      {
+        "object": "public.webhook_configs",
+        "papel_real": "morta",
+        "vira": "descartar",
+        "evidencia": "webhook_configs.md: vazia/vestigial — n_tup_ins=0, seq_scan=0, idx_scan=0, nenhum reader/writer em qualquer fonte; PK nunca varrida. 08-dependencias.md §4.3: interseção R=0∩W=0 'Morta'. Config real de webhooks vive em env vars das edge functions. Esfera cobrança.",
+        "atributos_chave": []
+      },
+      {
+        "object": "public.todos",
+        "papel_real": "morta",
+        "vira": "descartar",
+        "evidencia": "todos.md: vazia (n_live_tup=0, heap 0 bytes), só id+created_at (sem coluna de conteúdo), sem migration, sem código, sem consumidor. Boilerplate do quickstart Supabase (policy com aspas estilo Dashboard). 08-dependencias.md §4.3: 'Morta'. Forte candidata a DROP.",
+        "atributos_chave": []
+      },
+      {
+        "object": "public.agents_bak_20260601_precancel",
+        "papel_real": "morta",
+        "vira": "descartar",
+        "evidencia": "agents_bak_20260601_precancel.md: backup CTAS datado de agents (14 linhas, estado pré-cancelamento); sem PK/índice/constraints (CTAS perde-as), RLS OFF, nenhum reader (seq_scan=0). 08-dependencias.md §4.3: 'Backup'. Candidato a DROP após estabilização.",
+        "atributos_chave": []
+      },
+      {
+        "object": "public.agents_bak_20260601_prerename",
+        "papel_real": "morta",
+        "vira": "descartar",
+        "evidencia": "agents_bak_20260601_prerename.md: backup CTAS datado de agents (13 linhas, estado pré-rename); sem PK/índice, RLS OFF, sem consumidor de produção (seq_scan=1 inspeção pontual). 08-dependencias.md §4.3: 'Backup'. Candidato a DROP.",
+        "atributos_chave": []
+      }
+    ],
+    "state_machines": [
+      {
+        "nome": "Execução de sync de planilha (status do sync run)",
+        "estados": [
+          "processing",
+          "completed",
+          "failed"
+        ],
+        "transicoes": "sync_cobranca_v2 cria a linha em status='processing' no início e atualiza para o status final (completed) ao concluir, ou registra erro (failed/error). Concorrência: índice parcial idx_sync_log_status WHERE status='processing' garante detectar sync em andamento (1 por vez). Idempotência: índice único idx_sync_log_file_id (1 sync por file_id). DELETE por file_id em re-runs.",
+        "onde_vive_hoje": "public.spreadsheet_sync_log.status (+ índices idx_sync_log_status parcial e idx_sync_log_file_id único). FORA do domínio chat — só relevante se o v3 assumir o backend do /upload."
+      },
+      {
+        "nome": "Ativação do operador (conta ativa/inativa)",
+        "estados": [
+          "ativo (is_active=true)",
+          "inativo (is_active=false)"
+        ],
+        "transicoes": "admin alterna via setUserActiveAction (profiles.update({is_active})); create_admin_user faz upsert com is_active. Default=true. Lido por chat_admin_list_users e get_users_with_emails.",
+        "onde_vive_hoje": "public.profiles.is_active"
+      },
+      {
+        "nome": "Permissão operador↔unidade (concedida/revogada)",
+        "estados": [
+          "concedida (is_active=true)",
+          "revogada (is_active=false)"
+        ],
+        "transicoes": "grant_unit_permission faz upsert (ON CONFLICT por chave natural user_id,unit_id,permission) com is_active=true; revoke_unit_permission faz UPDATE is_active=false (soft-revoke, não DELETE). Todos os checks de acesso filtram is_active/COALESCE(is_active,true).",
+        "onde_vive_hoje": "public.user_unit_permissions.is_active (chave (user_id, unit_id, permission))"
+      }
+    ],
+    "regras_negocio": [
+      "Tenant scoping universal: units é a raiz da multi-tenancy (0 FKs de saída, 28 FKs de entrada via unit_id); toda tabela transacional referencia units.id. No v3, unit_id é a chave de partição/escopo de praticamente tudo. (units.md, 08-dependencias.md §1.3)",
+      "Cadeia de RLS por unidade no inbox: auth.uid() → profiles.user_id → profiles.id → user_units.user_id → unit_id. O escopo do operador depende de profiles.id (NÃO auth.users.id) em user_units. (profiles.md, user_units.md, CLAUDE.md)",
+      "DOIS sistemas paralelos de acesso operador↔unidade com CHAVES DIVERGENTES (achado arquitetural a corrigir no v3): user_units usa profiles.id (escopo do inbox chat) e user_unit_permissions usa auth.users.id (escopo de cobrança/relatórios). É exatamente por isso que a RLS de own-row de user_units QUEBRA (compara user_units.user_id=auth.uid(), mas user_id é profiles.id → nunca batem; operador comum vê 0 linhas por select direto) e a de user_unit_permissions FUNCIONA. INVARIANTE v3: unificar num único vínculo operador↔unidade com UMA base de chave consistente. (user_units.md, user_unit_permissions.md — contornado hoje por helpers SECURITY DEFINER chat_my_units/chat_user_has_unit)",
+      "Admin gate global via papel: has_role(auth.uid(),'admin') lendo user_roles controla a página /admin/users e o nav. Papéis do enum app_role: admin/collections_agent/user/sales_agent. INFERÊNCIA: o único (user_id,role) permite multi-papel — decidir no v3 se papel é único por operador. (user_roles.md)",
+      "Revogação de permissão é soft (is_active=false), nunca DELETE — preserva histórico de quem teve acesso. granted_by/granted_at são auditoria. (user_unit_permissions.md)",
+      "Idempotência de sync de planilha: 1 sync por file_id (índice único) e 1 sync 'processing' por vez (índice parcial de concorrência). Relevante apenas se o v3 assumir o import de inadimplentes do /upload. (spreadsheet_sync_log.md)",
+      "Reversibilidade do sync: cobranca_sync_backup guarda a foto pré-sync (row_data jsonb da linha inteira) e rollback_sync reconstrói o estado anterior por sync_log_id; sync_snapshots persiste o histórico diário por (unit_id, snapshot_date) para cálculo de deltas. Ambas NÃO são mortas apesar de n_live_tup=0. Esfera cobrança/n8n. (cobranca_sync_backup.md, sync_snapshots.md)",
+      "Push fanout (handoff) depende de chat_config conter as chaves app_origin e cron_secret; sem elas, chat_notify_handoff é no-op. CONTRADIÇÃO doc↔banco: CLAUDE.md ainda cita 'GUCs no banco app.app_origin/app.cron_secret' — desatualizado; a migration 0003 substituiu os GUCs pela tabela chat_config (Supabase Cloud bloqueia ALTER DATABASE SET). (chat_config.md)",
+      "Não alterar tabelas do n8n/cobrança: spreadsheet_sync_log, cobranca_sync_backup, sync_snapshots, app_internal_config, webhook_configs e os agents_bak_* pertencem ao fluxo de cobrança/n8n. No v3 de chat são descartar (não importar), salvo a condição do /upload acima. (CLAUDE.md, deep-dives)"
+    ],
+    "notes": "SLICE = tenant/auth (units, profiles, user_units, user_unit_permissions, user_roles) + infra de sync/config (spreadsheet_sync_log, cobranca_sync_backup, sync_snapshots, app_internal_config, chat_config) + mortas (webhook_configs, todos, agents_bak_*). 14 itens, 1 por tabela.\n\nENTIDADES REAIS do v3 nesta fatia: unit (tenant) e operador (profiles). RELACIONAMENTOS: user_units + user_unit_permissions colapsam num ÚNICO vínculo operador↔unidade (com permission/role como atributo) — é a principal recomendação de modelagem da fatia, motivada pela divergência de chave (profiles.id vs auth.users.id) que hoje quebra uma RLS e mantém a outra. user_roles = junção operador↔papel (app_role é o catálogo). CONFIG própria do chat: chat_config. DESCARTAR (esfera cobrança/n8n): app_internal_config + toda a stack de sync (spreadsheet_sync_log, cobranca_sync_backup, sync_snapshots) — exceto se o v3 implementar o backend do /upload de inadimplentes (feature CHAT-CDT real, hoje frontend-only). MORTAS para drop: webhook_configs, todos, agents_bak_20260601_precancel, agents_bak_20260601_prerename.\n\nCURADORIA de atributos: de units removi bi_name/rabbitmq_queue/whatsapp_phone (campos de motor/PowerBI/cobrança, não do tenant de chat — whatsapp_phone é só rótulo da página de pagamento). Colunas de auditoria sem reader (granted_by/granted_at/created_at/updated_at) ficaram fora dos atributos-chave.\n\nINFERÊNCIAS marcadas: (1) profiles tem gap de ordinal pos-4 = coluna droppada, provável unit_id antigo (modelo 1:1 substituído por user_units N:N) — edge create-admin-users carrega referência stale a profiles.unit_id (bug latente). (2) unificação dos dois vínculos no v3. (3) multi-papel vs papel único em user_roles. (4) carryover condicional da stack de sync ao v3 dependente do /upload.\n\nACHADOS DE SEGURANÇA relevantes ao modelo (10-seguranca.md): cobranca_sync_backup com RLS OFF + PII completa do devedor (A1, não flagado na doc); RLS de user_units quebrada por chave divergente; user_roles 90,6M seq_scan por has_role não-embrulhado em subquery nas policies (P1). State machines de routing (ai→queued→human), cadência, pagamento, link e template NÃO aparecem nesta fatia (vivem em outras tabelas) — não fabricadas."
+  }
+]

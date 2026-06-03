@@ -35,6 +35,8 @@ export type DebtorPayment = {
 
 export type DebtorContext = {
   matched: boolean
+  /** Trilho do contato, casado por telefone+unidade (migration 0015). */
+  trilho?: 'cobranca' | 'relacionamento' | null
   ambiguous?: boolean
   name?: string | null
   matricula?: string | null

@@ -102,10 +102,14 @@ export function ThreadHeader({ conv, contextOpen, onToggleContext }: Props) {
     })
   }
 
-  function confirmClose(outcome: CloseOutcome, note?: string) {
+  function confirmClose(
+    outcome: CloseOutcome,
+    note?: string,
+    paymentMethod?: string,
+  ) {
     startTransition(async () => {
       // closeConversation redirects on success; only errors return here.
-      const r = await closeConversation(conv.id, outcome, note)
+      const r = await closeConversation(conv.id, outcome, note, paymentMethod)
       if (r?.error) toast.error(`Encerrar: ${r.error}`)
     })
   }
@@ -305,6 +309,7 @@ export function ThreadHeader({ conv, contextOpen, onToggleContext }: Props) {
       <CloseDialog
         open={closeOpen}
         onOpenChange={setCloseOpen}
+        handoffReason={conv.handoff_reason}
         pending={isPending}
         onConfirm={confirmClose}
       />

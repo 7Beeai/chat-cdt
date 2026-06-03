@@ -49,6 +49,19 @@ export type ConversationListItem = {
   preview: MessagePreview | null
 }
 
+/**
+ * True (uncapped) queue counts for one unit, from the chat_inbox_vitals RPC.
+ * Decoupled from the capped working set so the vitals strip + "Aguardando" tab
+ * badge show the real backlog. `waiting`/`breached`/`active` mirror the client
+ * definitions in matchesTab + queue-vitals.tsx (see migration 0014).
+ */
+export type UnitVitals = {
+  unit_id: string
+  waiting: number
+  breached: number
+  active: number
+}
+
 /** Minimal realtime row payload (no joins). */
 export type ConversationRow = {
   id: string

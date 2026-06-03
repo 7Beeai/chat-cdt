@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import { formatPersonName } from '@/lib/format/name'
 
 import { InboxWorkspace } from '@/components/inbox/inbox-workspace'
-import type { ConversationListItem } from './list-data'
+import type { ConversationListItem, UnitVitals } from './list-data'
 import { extractPreview } from './preview'
 
 export const dynamic = 'force-dynamic'
@@ -143,11 +143,22 @@ export default async function InboxLayout({
     }
   }
 
+  // True (uncapped) per-unit queue counts. The list above is capped at 300 for
+  // performance, so the client-derived vitals/tab badge would pin at the cap
+  // and disagree with Relatórios. This RPC counts server-side, unscoped by the
+  // limit; the client re-aggregates by the selected unit. Ver migration 0014.
+  const { data: vitalsRaw, error: vitalsErr } = await supabase.rpc(
+    'chat_inbox_vitals',
+  )
+  if (vitalsErr) console.error('[inbox] vitals fetch failed', vitalsErr)
+  const vitalsByUnit = (vitalsRaw ?? []) as UnitVitals[]
+
   return (
     <InboxWorkspace
       initial={items}
       currentUserId={user.id}
       operatorNames={operatorNames}
+      vitalsByUnit={vitalsByUnit}
     >
       {children}
     </InboxWorkspace>

@@ -110,6 +110,7 @@ export async function closeConversation(
   conversationId: string,
   outcome: CloseOutcome,
   note?: string,
+  paymentMethod?: string,
 ): Promise<ActionResult> {
   const supabase = await createClient()
   const {
@@ -119,7 +120,9 @@ export async function closeConversation(
   if (!outcome) return { error: 'Informe o desfecho do atendimento.' }
 
   // Single UPDATE carries status + outcome + author; the AFTER trigger reads
-  // NEW.* and writes the 'closed' event with the outcome baked in.
+  // NEW.* and writes the 'closed' event with the outcome baked in. The payment
+  // method only sticks for resolved closes (the dialog only asks for it on a
+  // payment_re_register + resolvido close); otherwise it's nulled.
   const { error } = await supabase
     .from('conversations')
     .update({
@@ -128,6 +131,8 @@ export async function closeConversation(
       closed_by: user.id,
       close_outcome: outcome,
       close_note: note?.trim() || null,
+      close_payment_method:
+        outcome === 'resolvido' ? paymentMethod?.trim() || null : null,
     })
     .eq('id', conversationId)
 

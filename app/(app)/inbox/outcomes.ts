@@ -36,6 +36,26 @@ export const CLOSE_OUTCOME_LABEL: Record<CloseOutcome, string> =
     string
   >
 
+/**
+ * Payment methods offered when closing a "Recadastro de pagamento" handoff as
+ * "resolvido" (the only context the field appears in — see close-dialog.tsx).
+ * `value` is stored verbatim and mirrors the canonical cobrança vocabulary
+ * (clientes_cobranca_dashboard."forma de pagamento") so the metric aligns with
+ * the n8n side; `label` is the friendlier display. Stored as free text
+ * (migration 0015) — extend this list without a migration. 'OUTRO' is the
+ * safety escape for anything not covered.
+ */
+export const CLOSE_PAYMENT_METHODS: { value: string; label: string }[] = [
+  { value: 'CARTÃO DE CRÉDITO', label: 'Cartão de crédito' },
+  { value: 'CARTÃO DE DÉBITO', label: 'Cartão de débito' },
+  { value: 'DÉBITO BANCÁRIO', label: 'Débito bancário' },
+  { value: 'BOLETO/CARNE', label: 'Boleto / Carnê' },
+  { value: 'PIX', label: 'PIX' },
+  { value: 'CONCESSIONÁRIA ENERGIA', label: 'Concessionária de energia' },
+  { value: 'DIRETO NO CARTÃO', label: 'Direto no cartão' },
+  { value: 'OUTRO', label: 'Outro' },
+]
+
 /** Badge tone per outcome (Tailwind classes), for the closed list/chips. */
 export const CLOSE_OUTCOME_TONE: Record<CloseOutcome, string> = {
   resolvido: 'bg-accent/12 text-accent border border-accent/30',

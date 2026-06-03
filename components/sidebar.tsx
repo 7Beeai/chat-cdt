@@ -11,6 +11,7 @@ import {
   LogOut,
   MessageCircle,
   Shield,
+  // UploadCloud,  // tela de import (upload) ainda não funcional
 } from 'lucide-react'
 
 import { signOut } from '@/app/login/actions'
@@ -59,6 +60,8 @@ export function Sidebar({
       icon: MessageCircle,
       badge: waitingCount > 0 ? waitingCount : undefined,
     },
+    // Desativado — tela de import (upload) ainda não funcional:
+    // { href: '/upload', label: 'Importar', icon: UploadCloud },
     // Desativado temporariamente — restaurar quando a tela for retomada:
     // { href: '/templates', label: 'Templates', icon: LayoutTemplate },
     ...(isAdmin

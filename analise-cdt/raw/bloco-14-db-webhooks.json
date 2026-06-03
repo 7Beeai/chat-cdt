@@ -1,0 +1,19 @@
+[
+  {
+    "hook_name": "\tcancel-links-on-regua-valor-update",
+    "invocacoes": 3962003,
+    "primeiro": "2026-02-22T17:50:43.479986+00:00",
+    "ultimo": "2026-05-26T15:41:24.163799+00:00",
+    "_obs": "Nome ANTIGO do database webhook (note o \\t inicial literal no nome). ~3,96 milhoes de invocacoes em ~3 meses. Substituido em 2026-05-27 pelo trigger cancel_links_on_regua_valor_update. Sinal de disparo per-row em updates em massa de clientes_cobranca_* (coluna regua_valor)."
+  },
+  {
+    "hook_name": "cancel_links_on_regua_valor_update",
+    "invocacoes": 5304,
+    "primeiro": "2026-05-27T11:01:05.329068+00:00",
+    "ultimo": "2026-06-01T12:16:10.947979+00:00",
+    "_obs": "Nome ATUAL. Trigger AFTER UPDATE OF regua_valor que chama supabase_functions.http_request -> edge function cancel-payment-links."
+  },
+  {
+    "_meta": "Fonte: supabase_functions.hooks (registro/log de invocacoes de Database Webhooks). Colunas reais: id, hook_table_id, hook_name, created_at, request_id (NAO ha coluna 'type' — por isso a query original do bloco-14 falhou 42703). Agregado por hook_name via execute_sql read-only em 2026-06-02."
+  }
+]

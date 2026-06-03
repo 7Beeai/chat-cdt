@@ -1,0 +1,267 @@
+[
+  {
+    "view": "available_units",
+    "tables_fonte": [
+      {
+        "table": "units",
+        "columns": [
+          "id",
+          "name",
+          "code",
+          "created_at",
+          "updated_at"
+        ]
+      }
+    ],
+    "metrica": "Lista de todas as unidades disponiveis no sistema, ordenadas por nome.",
+    "purpose": "View publica de catalogo de unidades; serve como fonte simples para seletores/filtros de unidade na operacao.",
+    "notes": "Sem CTEs, filtros ou agregacoes. SELECT direto de units com ORDER BY name."
+  },
+  {
+    "view": "cobranca_diaria_mes_atual",
+    "tables_fonte": [
+      {
+        "table": "pagamentos",
+        "columns": [
+          "unit_id",
+          "valor",
+          "data_pagamento",
+          "reembolso_realizado"
+        ]
+      },
+      {
+        "table": "units",
+        "columns": [
+          "id",
+          "code"
+        ]
+      }
+    ],
+    "metrica": "Baixas de cobranca diarias do mes corrente: por dia do mes, valor total recebido, quantidade de pagamentos e comissao total estimada. Metrica de dashboard (sufixo *_mes_atual).",
+    "purpose": "Serie diaria de arrecadacao do mes atual para o dashboard, ja convertendo centavos em reais e aplicando o percentual de comissao por unidade para compor a comissao total do dia.",
+    "notes": "Filtro de periodo: mes corrente em America/Sao_Paulo (inicio_mes = date_trunc('month', now() AT TIME ZONE 'America/Sao_Paulo') ate agora). CTE periodo calcula dia_atual e dias_no_mes. CTE realizado_unit soma valor realizado por unidade no mes. CTE unit_pct define o percentual de comissao por unidade via CASE sobre o valor PROJETADO (realizado/dia_atual*dias_no_mes): <=15000 -> 10%, <=30000 -> 9%, <=45000 -> 8%, senao 7%. CTE exception_codes lista 6 unidades (ibirite, pousoalegre001, cabofrio001, varginha001, trescoracoes001, portoalegre001) com comissao fixa de 7%. Exclui estornos via reembolso_realizado IS NOT TRUE. Valores divididos por 100 (centavos -> reais). GROUP BY dia do mes."
+  },
+  {
+    "view": "estornos_mes_atual",
+    "tables_fonte": [
+      {
+        "table": "pagamentos",
+        "columns": [
+          "valor",
+          "data_pagamento",
+          "reembolso_realizado"
+        ]
+      }
+    ],
+    "metrica": "Total de estornos/reembolsos do mes corrente: valor total reembolsado e quantidade de estornos. Metrica de dashboard (sufixo *_mes_atual).",
+    "purpose": "Indicador agregado de reembolsos do mes atual para o dashboard, complementando a arrecadacao com o que foi devolvido.",
+    "notes": "CTE periodo limita ao mes corrente em America/Sao_Paulo. Filtra reembolso_realizado = true (oposto das views de ganhos/cobranca que excluem estornos). COALESCE para 0 quando nao ha estornos; valor dividido por 100 (centavos -> reais)."
+  },
+  {
+    "view": "ganhos_mes_atual",
+    "tables_fonte": [
+      {
+        "table": "pagamentos",
+        "columns": [
+          "unit_id",
+          "valor",
+          "data_pagamento",
+          "reembolso_realizado"
+        ]
+      },
+      {
+        "table": "units",
+        "columns": [
+          "id",
+          "name",
+          "code"
+        ]
+      }
+    ],
+    "metrica": "Ganhos do mes corrente por unidade: valor realizado, valor projetado para o mes, quantidade de pagamentos, percentual de comissao e comissoes realizada e projetada. Metrica de dashboard (sufixo *_mes_atual).",
+    "purpose": "Ranking/resumo de desempenho de arrecadacao e comissao por unidade no mes atual, base do painel de ganhos; ordenado por valor_realizado DESC.",
+    "notes": "Filtro de periodo: mes corrente em America/Sao_Paulo. CTE periodo calcula dia_atual e dias_no_mes. CTE realizado soma valor e conta pagamentos por unidade (exclui estornos via reembolso_realizado IS NOT TRUE). CTE com_projecao faz LEFT JOIN units com realizado e projeta o valor do mes (realizado/dia_atual*dias_no_mes). CASE de comissao baseado no valor PROJETADO: <=15000 -> 10%, <=30000 -> 9%, <=45000 -> 8%, senao 7%; 6 unidades de exception_codes (ibirite, pousoalegre001, cabofrio001, varginha001, trescoracoes001, portoalegre001) tem comissao fixa 7% (flag comissao_fixa). comissao_realizada = valor_realizado * pct; comissao_projetada = valor_projetado * pct. Valores em reais (centavos/100)."
+  },
+  {
+    "view": "v_message_perf_24h",
+    "tables_fonte": [
+      {
+        "table": "message_log",
+        "columns": [
+          "unit_id",
+          "status",
+          "delivered_at",
+          "sent_at",
+          "read_at"
+        ]
+      },
+      {
+        "table": "units",
+        "columns": [
+          "id",
+          "bi_name"
+        ]
+      }
+    ],
+    "metrica": "Performance de entrega de mensagens nas ultimas 24h por unidade: total enviado, % entregue (delivered/read), % falha, % lido, e latencia media de entrega e leitura em segundos.",
+    "purpose": "Monitoramento operacional de saude de envio de mensagens WhatsApp por unidade na janela recente, para detectar degradacao de entregabilidade.",
+    "notes": "Janela movel de 24h (sent_at >= now() - 24h). Usa COUNT(*) FILTER (WHERE status ...) para percentuais; pct_delivered considera status IN ('delivered','read'). NULLIF(count,0) evita divisao por zero. Latencias via EXTRACT(epoch FROM delivered_at - sent_at) e read_at - sent_at. LEFT JOIN units para bi_name. GROUP BY unit_id, bi_name."
+  },
+  {
+    "view": "v_phone_health_current",
+    "tables_fonte": [
+      {
+        "table": "phone_health",
+        "columns": [
+          "phone_number_id",
+          "unit_id",
+          "quality_rating",
+          "status",
+          "observed_at",
+          "event",
+          "current_limit"
+        ]
+      },
+      {
+        "table": "units",
+        "columns": [
+          "id",
+          "bi_name",
+          "name",
+          "code"
+        ]
+      }
+    ],
+    "metrica": "Snapshot atual de saude de cada numero de telefone WhatsApp: quality_rating, status, limite atual e ultimo evento.",
+    "purpose": "Visao do estado corrente de cada phone number (qualidade/limite/status) por unidade, para monitoramento de saude da infraestrutura de envio.",
+    "notes": "Padrao DISTINCT ON (phone_number_id) + ORDER BY phone_number_id, observed_at DESC = ultimo snapshot por numero a partir do log historico phone_health. LEFT JOIN units para nomes (bi_name, name) e code."
+  },
+  {
+    "view": "v_template_current",
+    "tables_fonte": [
+      {
+        "table": "template_status_log",
+        "columns": [
+          "template_name",
+          "status",
+          "category",
+          "created_at"
+        ]
+      },
+      {
+        "table": "template_inventory",
+        "columns": [
+          "template_name",
+          "quality_score",
+          "rejection_reason",
+          "updated_at"
+        ]
+      }
+    ],
+    "metrica": "Estado atual de cada template de mensagem: status, categoria, data observada, quality_score e motivo de rejeicao.",
+    "purpose": "Consolida o status corrente de cada template (do log de status) enriquecido com a qualidade/motivo de rejeicao mais recente do inventario, para monitorar aprovacao/qualidade de templates.",
+    "notes": "DISTINCT ON (template_name) + ORDER BY template_name, created_at DESC pega o registro de status mais recente por template em template_status_log. LATERAL subquery puxa a linha mais recente de template_inventory por template (ORDER BY updated_at DESC NULLS LAST LIMIT 1) para quality_score e rejection_reason. Filtra template_name IS NOT NULL. created_at do log e exposto como observed_at."
+  },
+  {
+    "view": "v_template_health",
+    "tables_fonte": [
+      {
+        "table": "template_inventory",
+        "columns": [
+          "unit_code",
+          "status",
+          "paused_by_sentinel",
+          "category"
+        ]
+      }
+    ],
+    "metrica": "Saude agregada de templates por unidade e status: total de templates e contagens por categoria UTILITY e MARKETING.",
+    "purpose": "Resumo de quantos templates cada unidade tem em cada status (incluindo pausados pelo sentinel), com quebra por categoria, para visao macro de saude de templates.",
+    "notes": "Agregacao por unit_code, status e paused_by_sentinel. count(*) FILTER (WHERE category = 'UTILITY') e count(*) FILTER (WHERE category = 'MARKETING') separam as contagens por categoria. Sem joins."
+  },
+  {
+    "view": "v_waba_capability_current",
+    "tables_fonte": [
+      {
+        "table": "waba_capability",
+        "columns": [
+          "waba_id",
+          "unit_id",
+          "max_phone_numbers",
+          "max_daily_conversations",
+          "observed_at"
+        ]
+      },
+      {
+        "table": "units",
+        "columns": [
+          "id",
+          "bi_name",
+          "name"
+        ]
+      }
+    ],
+    "metrica": "Snapshot atual de capacidade de cada WABA: maximo de numeros de telefone e maximo de conversas diarias.",
+    "purpose": "Estado corrente dos limites de capacidade de cada conta WABA por unidade, para planejamento e monitoramento de capacidade de envio.",
+    "notes": "Padrao DISTINCT ON (waba_id) + ORDER BY waba_id, observed_at DESC = ultima capacidade observada por WABA a partir do historico waba_capability. LEFT JOIN units para bi_name e name."
+  },
+  {
+    "view": "v_waba_health_current",
+    "tables_fonte": [
+      {
+        "table": "waba_health",
+        "columns": [
+          "waba_id",
+          "unit_id",
+          "name",
+          "account_review_status",
+          "business_verification_status",
+          "health_status",
+          "observed_at"
+        ]
+      },
+      {
+        "table": "units",
+        "columns": [
+          "id",
+          "bi_name",
+          "name"
+        ]
+      }
+    ],
+    "metrica": "Snapshot atual de saude de cada WABA: status de revisao da conta, verificacao do negocio e se pode enviar mensagens (can_send_message).",
+    "purpose": "Estado corrente de cada conta WABA (review/verificacao/capacidade de envio) por unidade, para monitoramento de risco de bloqueio de envio.",
+    "notes": "Padrao DISTINCT ON (waba_id) + ORDER BY waba_id, observed_at DESC = ultimo snapshot por WABA. Extrai JSONB: health_status ->> 'can_send_message'. LEFT JOIN units (bi_name, name). Atencao: wh.name (nome do WABA) e u.name (nome da unidade) coexistem."
+  },
+  {
+    "view": "v_waba_violations_recent",
+    "tables_fonte": [
+      {
+        "table": "waba_violations",
+        "columns": [
+          "id",
+          "waba_id",
+          "unit_id",
+          "event",
+          "violation_type",
+          "restriction_type",
+          "restriction_expires_at",
+          "ban_state",
+          "affected_phone_number",
+          "observed_at"
+        ]
+      },
+      {
+        "table": "units",
+        "columns": [
+          "id",
+          "bi_name",
+          "name"
+        ]
+      }
+    ],
+    "metrica": "Lista de violacoes recentes de WABA: tipo de violacao, restricao, expiracao da restricao, estado de banimento e numero afetado, ordenada da mais recente.",
+    "purpose": "Feed cronologico de incidentes/violacoes de politica das contas WABA por unidade, para alerta e acompanhamento de restricoes e banimentos.",
+    "notes": "Sem deduplicacao (nao usa DISTINCT ON): lista todas as violacoes ordenadas por observed_at DESC. LEFT JOIN units para bi_name e name."
+  }
+]

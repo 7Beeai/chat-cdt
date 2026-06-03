@@ -5,8 +5,10 @@ import { X } from 'lucide-react'
 
 import {
   CLOSE_OUTCOMES,
+  CLOSE_PAYMENT_METHODS,
   type CloseOutcome,
 } from '@/app/(app)/inbox/outcomes'
+import type { HandoffReason } from '@/app/(app)/inbox/list-data'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -25,6 +27,7 @@ export function CloseDialog({
   open,
   onOpenChange,
   count = 1,
+  handoffReason,
   pending,
   onConfirm,
 }: {
@@ -32,15 +35,33 @@ export function CloseDialog({
   onOpenChange: (v: boolean) => void
   /** How many conversations are being closed (>1 from the bulk bar). */
   count?: number
+  /**
+   * Handoff reason of the conversation being closed. Drives the conditional
+   * payment-method field. Omitted (e.g. bulk close over mixed reasons) → the
+   * field never shows.
+   */
+  handoffReason?: HandoffReason | null
   pending?: boolean
-  onConfirm: (outcome: CloseOutcome, note?: string) => void
+  onConfirm: (
+    outcome: CloseOutcome,
+    note?: string,
+    paymentMethod?: string,
+  ) => void
 }) {
   const [outcome, setOutcome] = useState<CloseOutcome | null>(null)
   const [note, setNote] = useState('')
+  const [paymentMethod, setPaymentMethod] = useState<string | null>(null)
+
+  // Only on a re-registration handoff resolved successfully do we need to know
+  // which payment method the customer registered. Required when shown.
+  const needsPaymentMethod =
+    handoffReason === 'payment_re_register' && outcome === 'resolvido'
+  const paymentMissing = needsPaymentMethod && !paymentMethod
 
   function reset() {
     setOutcome(null)
     setNote('')
+    setPaymentMethod(null)
   }
 
   return (
@@ -99,6 +120,35 @@ export function CloseDialog({
           })}
         </div>
 
+        {needsPaymentMethod && (
+          <div className="rounded-[10px] border border-accent/30 bg-accent/[0.06] p-2.5">
+            <span className="mb-2 block font-mono text-[9px] font-semibold uppercase tracking-[0.16em] text-accent">
+              Forma de pagamento cadastrada *
+            </span>
+            <div className="flex flex-wrap gap-1.5">
+              {CLOSE_PAYMENT_METHODS.map((m) => {
+                const active = paymentMethod === m.value
+                return (
+                  <button
+                    key={m.value}
+                    type="button"
+                    onClick={() => setPaymentMethod(m.value)}
+                    aria-pressed={active}
+                    className={cn(
+                      'rounded-full border px-2.5 py-1 text-[12px] font-medium transition-colors',
+                      active
+                        ? 'border-accent bg-accent text-accent-foreground'
+                        : 'border-border bg-card hover:border-accent/40 hover:bg-secondary',
+                    )}
+                  >
+                    {m.label}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
         <label className="block">
           <span className="mb-1 block font-mono text-[9px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
             Nota (opcional)
@@ -121,8 +171,12 @@ export function CloseDialog({
             Cancelar
           </Button>
           <Button
-            onClick={() => outcome && onConfirm(outcome, note)}
-            disabled={pending || !outcome}
+            onClick={() =>
+              outcome &&
+              !paymentMissing &&
+              onConfirm(outcome, note, paymentMethod ?? undefined)
+            }
+            disabled={pending || !outcome || paymentMissing}
           >
             {pending ? 'Encerrando…' : 'Encerrar'}
           </Button>

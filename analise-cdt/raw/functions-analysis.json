@@ -1,0 +1,4571 @@
+[
+  {
+    "funcao": "add_to_blacklist",
+    "security_definer": true,
+    "search_path": null,
+    "reads": [],
+    "writes": [
+      {
+        "table": "blacklist_global",
+        "op": "insert",
+        "columns": [
+          "whatsapp",
+          "motivo",
+          "unit_origem",
+          "matricula_origem",
+          "raw_evidence"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Adiciona um numero de WhatsApp a blacklist global de cobranca, ignorando se ja existe (ON CONFLICT DO NOTHING).",
+    "notes": "INSERT ... ON CONFLICT (whatsapp) DO NOTHING RETURNING id. Retorna jsonb com flag inserted."
+  },
+  {
+    "funcao": "advance_cadence_state",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "clientes_cobranca_setembro",
+        "columns": [
+          "matricula",
+          "cadence_fase",
+          "cadence_dia_ciclo",
+          "slots_enviados_hoje",
+          "unit_id",
+          "whatsapp"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "cadence_slot_config",
+        "columns": [
+          "fase",
+          "dia_ciclo",
+          "slot",
+          "envios_no_dia"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [
+      {
+        "table": "message_log",
+        "op": "insert",
+        "columns": [
+          "matricula",
+          "unit_id",
+          "phone_number_id",
+          "to_whatsapp",
+          "template_name",
+          "wa_message_id",
+          "cadence_fase",
+          "cadence_dia_ciclo",
+          "cadence_slot",
+          "sent_at",
+          "status",
+          "raw_response"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "clientes_cobranca_setembro",
+        "op": "update",
+        "columns": [
+          "cadence_fase",
+          "cadence_dia_ciclo",
+          "cadence_slot",
+          "cadence_ultimo_template",
+          "slots_enviados_hoje",
+          "slots_enviados_hoje_data",
+          "cadence_proximo_envio_at"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Avanca a maquina de estados da cadencia de cobranca de uma matricula: registra o disparo em message_log (idempotente por wamid) e promove fase/dia/slot agendando o proximo envio.",
+    "notes": "SELECT ... FOR UPDATE para lock pessimista. INSERT em message_log usa ON CONFLICT (wa_message_id) WHERE wa_message_id IS NOT NULL DO NOTHING para idempotencia (replay). Logica de promocao de fase '00'->'01'->'02'. NOTA: message_log e tabela do n8n (apenas escrita aditiva de log aqui)."
+  },
+  {
+    "funcao": "agent_block_customer",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "clientes_cobranca_setembro",
+        "columns": [
+          "matricula",
+          "motivo_bloqueio",
+          "bloqueado_em",
+          "bloqueio_contexto"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [
+      {
+        "table": "clientes_cobranca_setembro",
+        "op": "update",
+        "columns": [
+          "bloqueio_disparos",
+          "motivo_bloqueio",
+          "bloqueado_em",
+          "bloqueio_contexto",
+          "updated_at"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Bloqueia disparos de cobranca para uma matricula com motivo validado (cancelamento/xingamento/ameaca_legal/ja_pagou), usado por agente IA.",
+    "notes": "Valida p_motivo via IN-list, RAISE EXCEPTION ERRCODE 22023 se invalido e 02000 se matricula nao encontrada. Tem RETURN QUERY final que faz SELECT na mesma tabela (leitura de matricula, motivo_bloqueio, bloqueado_em)."
+  },
+  {
+    "funcao": "agent_pause_customer",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "clientes_cobranca_setembro",
+        "columns": [
+          "matricula",
+          "pausa_motivo",
+          "disparos_pausados_ate",
+          "pausa_data_prometida"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [
+      {
+        "table": "clientes_cobranca_setembro",
+        "op": "update",
+        "columns": [
+          "disparos_pausados_ate",
+          "pausa_motivo",
+          "pausa_data_prometida",
+          "pausa_registrada_em",
+          "updated_at"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Pausa temporariamente os disparos de cobranca de uma matricula ate uma data limite (promessa_data ou ja_pagou_48h), com calculo de default.",
+    "notes": "Valida p_pausa_motivo via IN-list e rejeita data no passado (ERRCODE 22023). RETURN QUERY final faz SELECT na tabela (matricula, pausa_motivo, disparos_pausados_ate)."
+  },
+  {
+    "funcao": "assign_admin_role_by_email",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "auth.users",
+        "columns": [
+          "id",
+          "email"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [
+      {
+        "table": "user_roles",
+        "op": "insert",
+        "columns": [
+          "user_id",
+          "role"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Atribui o papel 'admin' a um usuario identificado por email, inserindo em user_roles se ainda nao existir.",
+    "notes": "Le auth.users por email. INSERT INTO public.user_roles ... ON CONFLICT (user_id, role) DO NOTHING. Role 'admin' literal."
+  },
+  {
+    "funcao": "auto_reconcile_orfaos",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "pagamentos_orfaos",
+        "columns": [
+          "id",
+          "source",
+          "gateway_correlation_id",
+          "payer_phone",
+          "reconciliado",
+          "created_at"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [
+      "resolve_orfao_matricula",
+      "reconcile_orfao"
+    ],
+    "external": [],
+    "purpose": "Loop batch que tenta resolver e reconciliar pagamentos orfaos pendentes: para cada orfao chama resolve_orfao_matricula e, se resolvido, reconcile_orfao, agregando contadores.",
+    "notes": "Iteracao FOR sobre SELECT de pagamentos_orfaos (filtros reconciliado=false, source, created_at). Escritas reais ocorrem dentro das RPCs chamadas (public.resolve_orfao_matricula, public.reconcile_orfao), nao diretamente aqui. Bloco EXCEPTION WHEN OTHERS por iteracao."
+  },
+  {
+    "funcao": "batch_update_disparo_outcomes",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [],
+    "writes": [
+      {
+        "table": "clientes_cobranca_setembro",
+        "op": "update",
+        "columns": [
+          "disparos",
+          "disparos_equipe",
+          "disparado com sucesso",
+          "data_ultimo_disparo",
+          "status"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Aplica em lote os desfechos de disparos (full/light/errado) a varias matriculas, incrementando contadores ou marcando 'whatsapp errado'.",
+    "notes": "Itera jsonb_array_elements(p_outcomes). Tres ramos de UPDATE na mesma tabela clientes_cobranca_setembro: 'full' (disparos, disparos_equipe, coluna com espaco \"disparado com sucesso\", data_ultimo_disparo), 'light' (disparos, data_ultimo_disparo), 'errado' (status='whatsapp errado'). Le campos do jsonb de entrada, nao de tabela."
+  },
+  {
+    "funcao": "buscar_links_resgate",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "links_pagamentos_gerados",
+        "columns": [
+          "correlation_id",
+          "matricula",
+          "whatsapp",
+          "unit_id",
+          "link_pagamento",
+          "pix_copia_cola",
+          "plataforma_pagamento_utilizada",
+          "resgate_count",
+          "data_link_gerado",
+          "cancelado_at"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "disparadores_whatsapp",
+        "columns": [
+          "unit_id",
+          "ativo",
+          "numero_telefone",
+          "waba_token",
+          "disparos_sucesso_hoje"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "pagamentos",
+        "columns": [
+          "correlation_id",
+          "id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "clientes_cobranca_dashboard",
+        "columns": [
+          "matricula",
+          "pagamento_feito"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Retorna (read-only) os links de pagamento elegiveis para resgate/reenvio dado um resgate_count e idade minima, juntando dispatcher ativo e excluindo ja pagos.",
+    "notes": "SQL puro (LANGUAGE sql). DISTINCT ON (l.correlation_id). JOIN disparadores_whatsapp (tabela n8n), LEFT JOIN pagamentos e clientes_cobranca_dashboard. Filtros: cancelado_at IS NULL, resgate_count=param, janela 24h, p.id IS NULL, pagamento_feito falso/null. Colunas com alias claro (l./d./p./c.)."
+  },
+  {
+    "funcao": "buscar_links_resgate_pendente",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "links_pagamentos_gerados",
+        "columns": [
+          "correlation_id",
+          "matricula",
+          "whatsapp",
+          "unit_id",
+          "link_pagamento",
+          "pix_copia_cola",
+          "plataforma_pagamento_utilizada",
+          "resgate_count",
+          "data_link_gerado",
+          "cancelado_at"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "disparadores_whatsapp",
+        "columns": [
+          "unit_id",
+          "ativo",
+          "id",
+          "waba_token",
+          "disparos_sucesso_hoje"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "pagamentos",
+        "columns": [
+          "correlation_id",
+          "id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "clientes_cobranca_dashboard",
+        "columns": [
+          "matricula",
+          "pagamento_feito"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Variante sem parametros de buscar_links_resgate: retorna links pendentes (resgate_count=0, idade >30min, janela 24h) ainda nao pagos, com dispatcher ativo.",
+    "notes": "SQL puro. Identica a buscar_links_resgate mas com resgate_count=0, min_age 30min fixos e expoe d.id AS number_instance (em vez de d.numero_telefone). JOINs e filtros com alias claro."
+  },
+  {
+    "funcao": "call_reconcile_function",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "app_internal_config",
+        "columns": [
+          "value",
+          "key"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [
+      "net.http_post"
+    ],
+    "purpose": "Dispara via HTTP (pg_net) uma Edge Function de reconciliacao do Supabase, passando a chave interna lida de app_internal_config e o slug/hours_back como parametros.",
+    "notes": "Le NOTIFY_ORPHAN_INTERNAL_KEY de app_internal_config; se nula, RAISE WARNING e retorna NULL. Efeito externo: net.http_post (pg_net) para https://ubwcxktaruxqacxltovq.supabase.co/functions/v1/<slug> com header x-internal-key, timeout 240s. Retorna request_id."
+  },
+  {
+    "funcao": "can_access_unit",
+    "security_definer": true,
+    "search_path": null,
+    "reads": [
+      {
+        "table": "units",
+        "columns": [
+          "id",
+          "code"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "user_roles",
+        "columns": [
+          "user_id",
+          "role"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "user_unit_permissions",
+        "columns": [
+          "user_id",
+          "unit_id",
+          "is_active"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Verifica (STABLE, para RLS) se o usuario autenticado pode acessar uma unidade pelo codigo: true se admin ou se tem permissao ativa em user_unit_permissions.",
+    "notes": "STABLE SECURITY DEFINER (sem SET search_path no corpo). Usa auth.uid(). Busca units.id por code; checa admin em user_roles; senao EXISTS em user_unit_permissions (is_active=TRUE). Role 'admin' literal."
+  },
+  {
+    "funcao": "cancel_pending_links_on_payment",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "pagamentos",
+        "columns": [
+          "correlation_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "links_pagamentos_gerados",
+        "columns": [
+          "correlation_id"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [
+      {
+        "table": "links_pagamentos_gerados",
+        "op": "update",
+        "columns": [
+          "cancelado_at",
+          "status"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Trigger handler que, ao marcar pagamento_feito=true numa linha, cancela os links de pagamento pendentes daquela matricula que ainda nao tem pagamento associado.",
+    "notes": "RETURNS trigger. Atua na transicao NEW.pagamento_feito true (de null/false) — provavel trigger AFTER/BEFORE UPDATE em clientes_cobranca_dashboard ou clientes_cobranca_setembro (tabela nao explicita no corpo; usa NEW.matricula/NEW.pagamento_feito). UPDATE links_pagamentos_gerados SET cancelado_at, status='cancelled' com NOT EXISTS subselect em pagamentos por correlation_id."
+  },
+  {
+    "funcao": "chat_admin_list_users",
+    "security_definer": true,
+    "search_path": "public, pg_temp",
+    "reads": [
+      {
+        "table": "auth.users",
+        "columns": [
+          "id",
+          "email",
+          "last_sign_in_at",
+          "created_at",
+          "banned_until"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "public.profiles",
+        "columns": [
+          "id",
+          "user_id",
+          "name",
+          "is_active"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "public.user_units",
+        "columns": [
+          "user_id",
+          "unit_id"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [
+      "public.has_role",
+      "auth.uid"
+    ],
+    "external": [],
+    "purpose": "Lista todos os usuarios (auth + profile + unidades + flag admin) para a tela administrativa, restrita a quem e admin.",
+    "notes": "STABLE. Restringe execucao via WHERE has_role(auth.uid(),'admin'); join profiles por user_id, user_units por profiles.id; agrega unit_ids."
+  },
+  {
+    "funcao": "chat_bump_conversation_window",
+    "security_definer": false,
+    "search_path": "public, pg_temp",
+    "reads": [
+      {
+        "table": "conversations",
+        "columns": [
+          "id"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [
+      {
+        "table": "conversations",
+        "op": "update",
+        "columns": [
+          "last_inbound_at",
+          "customer_window_expires_at"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Mantem a janela de 24h da Meta: ao receber mensagem inbound, atualiza last_inbound_at e a expiracao da janela na conversa.",
+    "notes": "Trigger handler (RETURNS trigger) atuando na tabela messages (usa NEW.direction='in', NEW.created_at, NEW.conversation_id) e escrevendo em conversations. NAO e SECURITY DEFINER."
+  },
+  {
+    "funcao": "chat_debtor_context",
+    "security_definer": true,
+    "search_path": "public, pg_temp",
+    "reads": [
+      {
+        "table": "public.conversations",
+        "columns": [
+          "id",
+          "unit_id",
+          "contact_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "public.contacts",
+        "columns": [
+          "id",
+          "wa_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "public.clientes_cobranca_dashboard",
+        "columns": [
+          "unit_id",
+          "whatsapp",
+          "bi_atual",
+          "updated_at",
+          "matricula",
+          "name",
+          "valor_inadimplente",
+          "status",
+          "regua",
+          "disparos",
+          "disparos_equipe",
+          "pagamento_feito"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "public.links_pagamentos_gerados",
+        "columns": [
+          "valor",
+          "status",
+          "pix_copia_cola",
+          "link_pagamento",
+          "data_link_gerado",
+          "created_at",
+          "expires_at",
+          "matricula",
+          "unit_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "public.pagamentos",
+        "columns": [
+          "valor",
+          "data_pagamento",
+          "forma_pagamento",
+          "baixa_realizada",
+          "matricula",
+          "unit_id"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [
+      "public.chat_user_has_unit",
+      "public.chat_phone_match_key"
+    ],
+    "external": [],
+    "purpose": "Monta o contexto de cobranca do devedor (dados do dashboard + ultimo link de pagamento + ultimo/total de pagamentos) para uma conversa, com checagem de unidade do operador.",
+    "notes": "STABLE. Read-only sobre tabelas do n8n (clientes_cobranca_dashboard, links_pagamentos_gerados, pagamentos). Faz match por telefone via chat_phone_match_key; respeita RLS de unidade via chat_user_has_unit. Retorna jsonb."
+  },
+  {
+    "funcao": "chat_debtor_names",
+    "security_definer": true,
+    "search_path": "public, pg_temp",
+    "reads": [
+      {
+        "table": "public.conversations",
+        "columns": [
+          "id",
+          "unit_id",
+          "contact_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "public.contacts",
+        "columns": [
+          "id",
+          "wa_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "public.clientes_cobranca_dashboard",
+        "columns": [
+          "unit_id",
+          "whatsapp",
+          "name",
+          "bi_atual",
+          "updated_at",
+          "matricula"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [
+      "public.chat_phone_match_key",
+      "public.chat_user_has_unit"
+    ],
+    "external": [],
+    "purpose": "Resolve, em lote, o nome validado de cobranca de cada conversa (nome do dashboard, nao do WhatsApp) para uma lista de conversation_ids.",
+    "notes": "STABLE. JOIN LATERAL pega 1 nome por conversa via match de telefone; filtra unidades do operador via chat_user_has_unit."
+  },
+  {
+    "funcao": "chat_is_admin",
+    "security_definer": true,
+    "search_path": "public, pg_temp",
+    "reads": [],
+    "writes": [],
+    "calls_rpcs": [
+      "public.has_role",
+      "auth.uid"
+    ],
+    "external": [],
+    "purpose": "Retorna true se o usuario autenticado tem papel admin.",
+    "notes": "STABLE. Wrapper sobre has_role(auth.uid(),'admin'); nenhuma tabela lida diretamente (acesso via has_role)."
+  },
+  {
+    "funcao": "chat_log_conversation_transition",
+    "security_definer": true,
+    "search_path": "public, pg_temp",
+    "reads": [],
+    "writes": [
+      {
+        "table": "public.chat_conversation_events",
+        "op": "insert",
+        "columns": [
+          "conversation_id",
+          "event_type",
+          "actor_id",
+          "from_routing",
+          "to_routing",
+          "from_status",
+          "to_status",
+          "outcome",
+          "note"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [
+      "auth.uid"
+    ],
+    "external": [],
+    "purpose": "Trigger que registra eventos do ciclo de atendimento (queued, returned_to_ai, assigned/reassigned, closed) na tabela de eventos sempre que a conversa muda de routing/operador/status.",
+    "notes": "Trigger handler (RETURNS trigger, retorna null -> AFTER trigger) sobre a tabela conversations; le NEW/OLD (routing, assigned_operator_id, status, closed_by, close_outcome, close_note) mas a unica tabela acessada por SQL e o INSERT em chat_conversation_events."
+  },
+  {
+    "funcao": "chat_my_units",
+    "security_definer": true,
+    "search_path": "public, pg_temp",
+    "reads": [
+      {
+        "table": "public.units",
+        "columns": [
+          "id",
+          "code",
+          "name"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "public.user_units",
+        "columns": [
+          "unit_id",
+          "user_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "public.profiles",
+        "columns": [
+          "id",
+          "user_id"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [
+      "auth.uid"
+    ],
+    "external": [],
+    "purpose": "Retorna as unidades (id/code/name) as quais o usuario autenticado tem acesso via user_units.",
+    "notes": "STABLE. Cadeia auth.uid()->profiles.user_id->profiles.id->user_units.user_id->unit_id; helper SECURITY DEFINER para contornar RLS de user_units."
+  },
+  {
+    "funcao": "chat_notify_handoff",
+    "security_definer": true,
+    "search_path": "public, pg_temp",
+    "reads": [
+      {
+        "table": "public.chat_config",
+        "columns": [
+          "value",
+          "key"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [
+      "net.http_post (pg_net) para origin || '/api/internal/push/notify'"
+    ],
+    "purpose": "Trigger que, ao colocar a conversa em routing='queued', dispara um POST HTTP assincrono (pg_net) para o endpoint de notificacao push da aplicacao.",
+    "notes": "Trigger handler sobre conversations (le NEW.routing/OLD.routing, NEW.id, NEW.unit_id, NEW.handoff_reason). Le app_origin e cron_secret de chat_config; efeito externo via net.http_post (no-op se origin vazio)."
+  },
+  {
+    "funcao": "chat_operator_names",
+    "security_definer": true,
+    "search_path": "public, pg_temp",
+    "reads": [
+      {
+        "table": "public.profiles",
+        "columns": [
+          "user_id",
+          "name"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Retorna os nomes dos operadores (profiles.name) para uma lista de user_ids.",
+    "notes": "STABLE. Filtra profiles.user_id = any(p_ids); usado para exibir labels humanos de operadores."
+  },
+  {
+    "funcao": "chat_phone_match_key",
+    "security_definer": false,
+    "search_path": "public",
+    "reads": [],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Normaliza um numero de telefone em uma chave de match (remove nao-digitos, tira DDI 55 quando aplicavel, monta DDD+8 ultimos digitos) para casar contato com cobranca.",
+    "notes": "IMMUTABLE, funcao pura (sem tabelas). Retorna null se menos de 8 digitos. NAO e SECURITY DEFINER; search_path = 'public'."
+  },
+  {
+    "funcao": "chat_purge_webhook_events",
+    "security_definer": true,
+    "search_path": "public, pg_temp",
+    "reads": [],
+    "writes": [
+      {
+        "table": "public.chat_webhook_events",
+        "op": "delete",
+        "columns": [
+          "received_at"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Rotina de limpeza que apaga eventos de webhook com mais de 7 dias (provavel job de cron).",
+    "notes": "DELETE com predicado received_at < now() - 7 days; received_at e a unica coluna citada (no WHERE)."
+  },
+  {
+    "funcao": "chat_record_outbound_message",
+    "security_definer": true,
+    "search_path": "public, pg_temp",
+    "reads": [
+      {
+        "table": "public.chat_phone_numbers",
+        "columns": [
+          "id",
+          "phone_number_id",
+          "waba_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "public.wabas",
+        "columns": [
+          "id",
+          "unit_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "public.conversations",
+        "columns": [
+          "id",
+          "contact_id",
+          "status"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [
+      {
+        "table": "public.contacts",
+        "op": "upsert",
+        "columns": [
+          "unit_id",
+          "wa_id",
+          "name"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "public.conversations",
+        "op": "insert",
+        "columns": [
+          "unit_id",
+          "contact_id",
+          "phone_number_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "public.messages",
+        "op": "upsert",
+        "columns": [
+          "conversation_id",
+          "wa_message_id",
+          "direction",
+          "type",
+          "payload",
+          "sent_by",
+          "status"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Registra uma mensagem outbound enviada (pela IA ou operador): resolve unidade pelo phone_number_id, faz upsert de contato, garante conversa aberta e insere a mensagem.",
+    "notes": "contacts: INSERT ... ON CONFLICT (unit_id,wa_id) DO UPDATE (upsert). messages: INSERT ... ON CONFLICT (wa_message_id) DO NOTHING (upsert idempotente). conversations: INSERT com tratamento de unique_violation -> re-SELECT (race contra n8n). Retorna jsonb com conversation_id/message_id/inserted."
+  },
+  {
+    "funcao": "chat_report_attendance",
+    "security_definer": true,
+    "search_path": "public, pg_temp",
+    "reads": [
+      {
+        "table": "user_units",
+        "columns": [
+          "unit_id",
+          "user_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "profiles",
+        "columns": [
+          "id",
+          "user_id",
+          "name"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "conversations",
+        "columns": [
+          "unit_id",
+          "handoff_reason",
+          "opened_at",
+          "status",
+          "assigned_at",
+          "assigned_operator_id",
+          "queued_at",
+          "closed_at",
+          "close_outcome",
+          "closed_by"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Gera relatorio de funil/SLA de atendimento humano (fila, atribuicao, fechamento, desfechos e desempenho por operador) para conversas com handoff dentro do escopo de unidades do usuario logado.",
+    "notes": "SQL STABLE. Escopo restrito via auth.uid()->profiles->user_units. CTEs 'hand' (select c.* de conversations) e 'closed'; colunas listadas sao as efetivamente referenciadas downstream (unit_id, handoff_reason, opened_at, status, assigned_at, assigned_operator_id, queued_at, closed_at, close_outcome, closed_by), nao o schema inteiro apesar do c.*. profiles 'pr' join por pr.user_id = c.closed_by para nome do operador."
+  },
+  {
+    "funcao": "chat_report_overview",
+    "security_definer": true,
+    "search_path": "public, pg_temp",
+    "reads": [
+      {
+        "table": "user_units",
+        "columns": [
+          "unit_id",
+          "user_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "profiles",
+        "columns": [
+          "id",
+          "user_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "conversations",
+        "columns": [
+          "unit_id",
+          "opened_at",
+          "handoff_reason",
+          "status",
+          "routing",
+          "assigned_operator_id",
+          "id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "messages",
+        "columns": [
+          "conversation_id",
+          "direction",
+          "sent_by",
+          "created_at"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "units",
+        "columns": [
+          "id",
+          "name"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Painel geral de relatorios: KPIs de conversas/handoff/deflexao, split de mensagens (cliente/IA/operador), backlog atual, comparativo com periodo anterior, breakdown por motivo/unidade, distribuicao por hora do dia e serie diaria, para o escopo de unidades do usuario.",
+    "notes": "SQL STABLE. CTEs 'conv'/'prev' (select c.* de conversations) e 'msg' (select m.* de messages join conv). Colunas de conversations limitadas as referenciadas (unit_id, opened_at, handoff_reason, status, routing, assigned_operator_id, id) mesmo com c.*. msg deriva apenas de messages, entao direction/sent_by/created_at/conversation_id sao de messages. Timezone fixo 'America/Sao_Paulo'."
+  },
+  {
+    "funcao": "chat_stamp_conversation_transition",
+    "security_definer": false,
+    "search_path": null,
+    "reads": [],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Trigger handler que carimba timestamps de transicao de ciclo (queued_at, assigned_at, closed_at) na propria conversa conforme mudanca de routing/assigned_operator_id/status.",
+    "notes": "plpgsql, trigger handler BEFORE INS/UPD em conversations. NAO e SECURITY DEFINER e NAO tem SET search_path (excecao no lote, nao seguir o default). Muta e retorna NEW (queued_at quando routing->'queued'; assigned_at quando assigned_operator_id muda para nao-nulo; closed_at quando status->'closed'); por ser mutacao de NEW e nao DML, writes=[] e a leitura defensavel. Le old/new de conversations."
+  },
+  {
+    "funcao": "chat_user_has_unit",
+    "security_definer": true,
+    "search_path": "public, pg_temp",
+    "reads": [
+      {
+        "table": "user_units",
+        "columns": [
+          "unit_id",
+          "user_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "profiles",
+        "columns": [
+          "id",
+          "user_id"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Helper de RLS (SECURITY DEFINER) que retorna true se o usuario autenticado tem vinculo com a unidade alvo, contornando a cadeia auth.uid()->profiles->user_units.",
+    "notes": "SQL STABLE. EXISTS sobre user_units join profiles; auth.uid()=p.user_id e uu.unit_id=target."
+  },
+  {
+    "funcao": "check_data_freshness",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "clientes_cobranca_dashboard",
+        "columns": [
+          "data_ultima_mensagem_temp",
+          "hora_link_gerado"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "clientes_cobranca_setembro",
+        "columns": [
+          "data_ultimo_disparo"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "links_pagamentos_gerados",
+        "columns": [
+          "created_at"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "pagamentos",
+        "columns": [
+          "data_pagamento",
+          "reembolso_realizado"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [
+      {
+        "table": "data_freshness_log",
+        "op": "insert",
+        "columns": [
+          "source",
+          "last_write",
+          "age_minutes",
+          "status",
+          "notes"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Monitora frescor dos dados de cobranca: verifica MAX de timestamps em varias tabelas (dashboard, setembro, links, pagamentos), classifica status (ok/stale/no_data) considerando horario comercial e registra cada checagem em data_freshness_log.",
+    "notes": "plpgsql. Le tabelas do fluxo de cobranca/n8n (clientes_cobranca_*, links_pagamentos_gerados, pagamentos) somente para agregacao MAX(). Insere 5 linhas (uma por fonte) em data_freshness_log. Timezone 'America/Sao_Paulo' para horario comercial."
+  },
+  {
+    "funcao": "cleanup_expired_links",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "pagamentos",
+        "columns": [
+          "correlation_id"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [
+      {
+        "table": "links_pagamentos_gerados",
+        "op": "update",
+        "columns": [
+          "status"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Job de limpeza que marca como 'expired' os links de pagamento pendentes ja vencidos (expires_at < now), nao cancelados e sem pagamento correspondente; retorna a contagem de linhas atualizadas.",
+    "notes": "plpgsql. UPDATE em links_pagamentos_gerados (filtra por status, expires_at, cancelado_at, correlation_id). NOT EXISTS sobre pagamentos por correlation_id. CTE 'updated' RETURNING 1 contado para o retorno."
+  },
+  {
+    "funcao": "create_admin_user",
+    "security_definer": true,
+    "search_path": "public, extensions",
+    "reads": [
+      {
+        "table": "auth.users",
+        "columns": [
+          "email"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [
+      {
+        "table": "auth.users",
+        "op": "insert",
+        "columns": [
+          "id",
+          "instance_id",
+          "email",
+          "encrypted_password",
+          "email_confirmed_at",
+          "created_at",
+          "updated_at",
+          "raw_app_meta_data",
+          "raw_user_meta_data",
+          "role",
+          "aud",
+          "confirmation_token",
+          "recovery_token",
+          "email_change_token_new",
+          "email_change"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "auth.identities",
+        "op": "insert",
+        "columns": [
+          "provider_id",
+          "user_id",
+          "identity_data",
+          "provider",
+          "last_sign_in_at",
+          "created_at",
+          "updated_at"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "profiles",
+        "op": "upsert",
+        "columns": [
+          "user_id",
+          "name",
+          "created_at",
+          "updated_at",
+          "is_active"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Cria um usuario admin programaticamente: valida email inexistente, gera hash de senha (pgcrypto bcrypt com fallbacks ate md5), insere em auth.users e auth.identities e faz upsert do perfil em public.profiles.",
+    "notes": "plpgsql SECURITY DEFINER que escreve em schemas auth.* (internals do Supabase) — efeito sensivel/cross-schema. profiles e UPSERT: ON CONFLICT (user_id) DO UPDATE SET name, updated_at, is_active. crypt/gen_salt/md5 sao built-ins pgcrypto (nao RPCs CDT, nao external). Le auth.users por email para verificar duplicidade."
+  },
+  {
+    "funcao": "create_emergency_admin",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "auth.users",
+        "columns": [
+          "id",
+          "email"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [
+      {
+        "table": "user_roles",
+        "op": "insert",
+        "columns": [
+          "user_id",
+          "role"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Concede acesso de emergencia: localiza usuario por email em auth.users e insere os papeis 'admin' e 'collections_agent' em user_roles (ON CONFLICT DO NOTHING).",
+    "notes": "plpgsql SECURITY DEFINER. Le auth.users (cross-schema). Dois INSERT em user_roles idempotentes (ON CONFLICT (user_id, role) DO NOTHING) com cast 'admin'::app_role / 'collections_agent'::app_role."
+  },
+  {
+    "funcao": "cron_clear_expired_pause",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [],
+    "writes": [
+      {
+        "table": "clientes_cobranca_setembro",
+        "op": "update",
+        "columns": [
+          "disparos_pausados_ate",
+          "pausa_motivo",
+          "pausa_registrada_em",
+          "updated_at"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Job que limpa pausa de disparos expirada de uma matricula especifica em clientes_cobranca_setembro (zera disparos_pausados_ate/pausa_motivo/pausa_registrada_em quando a data de pausa ja venceu).",
+    "notes": "plpgsql. UPDATE em clientes_cobranca_setembro (tabela do n8n/cobranca) filtrando por matricula e disparos_pausados_ate <= current_date."
+  },
+  {
+    "funcao": "cron_unblock_expired",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [],
+    "writes": [
+      {
+        "table": "clientes_cobranca_setembro",
+        "op": "update",
+        "columns": [
+          "bloqueio_disparos",
+          "motivo_bloqueio",
+          "bloqueado_em",
+          "bloqueio_contexto",
+          "updated_at"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Job que desbloqueia disparos de clientes em clientes_cobranca_setembro cujo bloqueio tem mais de 30 dias, limpando os campos de bloqueio; retorna a contagem de linhas afetadas.",
+    "notes": "plpgsql. UPDATE em clientes_cobranca_setembro (tabela do n8n/cobranca) onde bloqueio_disparos=true e bloqueado_em < now()-30 dias. GET DIAGNOSTICS ROW_COUNT para o retorno."
+  },
+  {
+    "funcao": "descartar_orfao",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [],
+    "writes": [
+      {
+        "table": "pagamentos_orfaos",
+        "op": "update",
+        "columns": [
+          "reconciliado",
+          "reconciliado_at",
+          "reconciliado_by",
+          "motivo_descarte",
+          "updated_at"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Marca um pagamento orfao como reconciliado/descartado (registra motivo, responsavel e timestamp) e retorna jsonb de sucesso ou erro se nao encontrado/ja resolvido.",
+    "notes": "plpgsql. UPDATE condicional em pagamentos_orfaos (id e reconciliado=false). Usa NOT FOUND para diferenciar orfao inexistente/ja resolvido. Retorno jsonb {ok, ...}."
+  },
+  {
+    "funcao": "ensure_admin_permissions",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "auth.users",
+        "columns": [
+          "id",
+          "email"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "information_schema.tables",
+        "columns": [
+          "table_name"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "units",
+        "columns": [
+          "id"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [
+      {
+        "table": "user_roles",
+        "op": "insert",
+        "columns": [
+          "user_id",
+          "role",
+          "created_at"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "user_unit_permissions",
+        "op": "insert",
+        "columns": [
+          "user_id",
+          "unit_id",
+          "permission",
+          "granted_at"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Garante permissoes de admin para um usuario por email: insere papel 'admin' em user_roles e, se a tabela user_unit_permissions existir, concede permissao 'admin' em todas as unidades.",
+    "notes": "plpgsql SECURITY DEFINER. Le auth.users (cross-schema) e information_schema.tables (checagem de existencia condicional). INSERT em user_roles (ON CONFLICT DO NOTHING) e, condicionalmente, em user_unit_permissions selecionando de units (u.id) com NOT EXISTS para evitar duplicatas."
+  },
+  {
+    "funcao": "get_all_units",
+    "security_definer": true,
+    "search_path": null,
+    "reads": [
+      {
+        "table": "public.units",
+        "columns": [
+          "id",
+          "name",
+          "code",
+          "created_at",
+          "updated_at"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Lista todas as unidades (tenants) da CDT ordenadas por nome, usada para popular seletores de unidade na UI.",
+    "notes": "Funcao SQL pura read-only. Unica da fatia sem SET search_path. Bypassa RLS (SECURITY DEFINER) para retornar todas as units independente de vinculo do operador."
+  },
+  {
+    "funcao": "get_cobranca_aggregates",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "public.clientes_cobranca_dashboard",
+        "columns": [
+          "regua",
+          "valor_inadimplente",
+          "link_pagamento_enviado",
+          "pagamento_feito",
+          "data_pagamento",
+          "hora_link_gerado"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Agrega valor cobrado (em aberto) e valor pago por regua de cobranca dentro de um periodo, para o dashboard de cobranca.",
+    "notes": "Tabela do n8n (clientes_cobranca_dashboard). O parametro _cdt_code nao filtra por dados da linha: a condicao e (_cdt_code IS NULL OR 'ibirite001' = _cdt_code), com o codigo de unidade hardcoded - passa-tudo ou casa com literal fixo. Regua e inferida via valor_inadimplente (3090 -> '1', 6180 -> '2') quando NULL."
+  },
+  {
+    "funcao": "get_cobranca_by_regua",
+    "security_definer": false,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "public.pagamentos",
+        "columns": [
+          "matricula",
+          "data_pagamento",
+          "unit_id",
+          "regua",
+          "valor"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "public.clientes_cobranca_dashboard",
+        "columns": [
+          "regua",
+          "valor_inadimplente",
+          "link_pagamento_enviado",
+          "hora_link_gerado",
+          "unit_id",
+          "pagamento_feito",
+          "matricula"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Compara valor cobrado (links em aberto) vs valor pago por regua, filtrando por unidade e periodo, com FULL OUTER JOIN entre cobrado e pago.",
+    "notes": "NAO e SECURITY DEFINER (STABLE apenas). Tres CTEs: pagas_no_periodo e pago leem public.pagamentos; cobrado le public.clientes_cobranca_dashboard. Colunas de pagamentos unidas entre as CTEs. clientes_cobranca_dashboard e tabela do n8n."
+  },
+  {
+    "funcao": "get_cobranca_kpis",
+    "security_definer": false,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "public.pagamentos",
+        "columns": [
+          "valor",
+          "data_pagamento",
+          "unit_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "public.clientes_cobranca_dashboard",
+        "columns": [
+          "data_ultimo_disparo",
+          "unit_id",
+          "data_ultima_mensagem_temp",
+          "link_pagamento_enviado",
+          "hora_link_gerado",
+          "pagamento_feito",
+          "valor_inadimplente"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Calcula KPIs de cobranca (pagamentos/valores no periodo, hoje e ontem; contatados; interacoes; links enviados; valores em aberto; cobrancas de hoje) para o dashboard.",
+    "notes": "NAO e SECURITY DEFINER (STABLE apenas). Multiplas CTEs: pag_periodo/pag_today/pag_yesterday leem public.pagamentos; cnt_contactados/cnt_interacoes/links/cnt_cobr_hoje leem public.clientes_cobranca_dashboard; today_brt e CTE de data sem tabela. Colunas unidas por tabela entre CTEs. clientes_cobranca_dashboard e tabela do n8n."
+  },
+  {
+    "funcao": "get_cobranca_metrics",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "public.clientes_cobranca_dashboard",
+        "columns": [
+          "data_ultimo_disparo",
+          "pagamento_feito",
+          "data_pagamento",
+          "id",
+          "respondeu",
+          "data_ultima_mensagem_temp",
+          "hora_link_gerado",
+          "link_pagamento_enviado",
+          "valor_inadimplente"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Retorna metricas agregadas de cobranca (total contactados, interacoes, links enviados, pagamentos realizados, valores em aberto e recebidos) num periodo.",
+    "notes": "SELECT de tabela unica (clientes_cobranca_dashboard, do n8n), entao 'id' e 'pagamento_feito' sao inequivocos -> confirmado. _cdt_code nao filtra por linha: (_cdt_code IS NULL OR 'ibirite001' = _cdt_code) com codigo hardcoded."
+  },
+  {
+    "funcao": "get_daily_payment_counts",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "public.clientes_cobranca_dashboard",
+        "columns": [
+          "data_pagamento",
+          "pagamento_feito"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Conta clientes com pagamento confirmado por dia (timezone America/Sao_Paulo) dentro de um periodo, para grafico diario de pagamentos.",
+    "notes": "Tabela unica clientes_cobranca_dashboard (do n8n). _cdt_code nao filtra por linha: (_cdt_code IS NULL OR 'ibirite001' = _cdt_code) com codigo hardcoded."
+  },
+  {
+    "funcao": "get_daily_payments",
+    "security_definer": false,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "public.pagamentos",
+        "columns": [
+          "data_pagamento",
+          "valor",
+          "unit_id"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Agrega quantidade e valor de pagamentos por dia (timezone America/Sao_Paulo) filtrando por unidade e periodo.",
+    "notes": "NAO e SECURITY DEFINER (STABLE apenas). Tabela unica public.pagamentos com alias p; colunas inequivocas."
+  },
+  {
+    "funcao": "get_daily_payments_multi",
+    "security_definer": false,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "public.pagamentos",
+        "columns": [
+          "data_pagamento",
+          "unit_id"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Conta pagamentos por dia e por unidade (multi-unidade) dentro de um periodo, para comparativo entre unidades.",
+    "notes": "NAO e SECURITY DEFINER (STABLE apenas). Tabela unica public.pagamentos com alias p; colunas inequivocas."
+  },
+  {
+    "funcao": "get_open_payment_links",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "public.links_pagamentos_gerados",
+        "columns": [
+          "matricula",
+          "valor",
+          "regua",
+          "created_at",
+          "correlation_id",
+          "unit_id",
+          "status",
+          "cancelado_at"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "public.pagamentos",
+        "columns": [
+          "correlation_id",
+          "reembolso_realizado"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Lista links de pagamento ainda pendentes (status pending, nao cancelados, sem pagamento correspondente) gerados nos ultimos N dias, por unidade.",
+    "notes": "JOIN logico via NOT EXISTS contra public.pagamentos (correlation_id). DISTINCT ON (matricula) pega o link mais recente. Colunas com alias l./p. -> inequivocas."
+  },
+  {
+    "funcao": "get_pagamentos",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "public.clientes_cobranca_dashboard",
+        "columns": [
+          "id",
+          "data_pagamento",
+          "matricula",
+          "name",
+          "whatsapp",
+          "valor_inadimplente",
+          "regua",
+          "correlation_id",
+          "link_pagamento",
+          "plataforma_pagamento_utilizada",
+          "baixa_realizada",
+          "baixa_realizada_at",
+          "baixa_realizada_by",
+          "reembolso_realizado",
+          "reembolso_realizado_at",
+          "reembolso_motivo",
+          "reembolso_realizado_by",
+          "pagamento_feito"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Lista pagamentos confirmados num intervalo de datas (timezone America/Sao_Paulo) com detalhes de baixa e reembolso, para a tela de pagamentos.",
+    "notes": "SELECT de tabela unica clientes_cobranca_dashboard (do n8n), portanto 'id' e inequivoco -> confirmado. Sem volatilidade declarada (default VOLATILE) mas e read-only."
+  },
+  {
+    "funcao": "get_pausas_vencidas",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "clientes_cobranca_setembro",
+        "columns": [
+          "matricula",
+          "name",
+          "whatsapp",
+          "pausa_motivo",
+          "pausa_data_prometida",
+          "disparos_pausados_ate",
+          "unit_id",
+          "pagamento_feito",
+          "bloqueio_disparos"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "disparadores_whatsapp",
+        "columns": [
+          "numero_telefone",
+          "waba_token",
+          "unit_id",
+          "ativo",
+          "disparos_sucesso_hoje"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Retorna clientes cuja pausa de disparos venceu (e ainda inadimplentes/nao bloqueados), com o disparador WhatsApp da unidade para retomar cobranca.",
+    "notes": "Le tabelas DIFERENTES do resto da fatia: clientes_cobranca_setembro (NAO _dashboard) e disparadores_whatsapp (tabela do n8n), ambas sem prefixo public. (dependem do search_path=public). disparadores_whatsapp lido via LEFT JOIN LATERAL; numero_telefone aliasado AS phone_number_id. data_combinada_br vem de COALESCE(pausa_data_prometida, disparos_pausados_ate) formatado."
+  },
+  {
+    "funcao": "get_pay_checkout",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "public.links_pagamentos_gerados",
+        "columns": [
+          "correlation_id",
+          "matricula",
+          "valor",
+          "status",
+          "expires_at",
+          "pix_copia_cola",
+          "pix_gateway",
+          "created_at",
+          "data_link_gerado",
+          "unit_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "public.clientes_cobranca_dashboard",
+        "columns": [
+          "name",
+          "matricula"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "public.units",
+        "columns": [
+          "name",
+          "id",
+          "whatsapp_phone"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Busca os dados de um checkout PIX (gateway abacate) por correlation_id, juntando link gerado, nome do cliente e dados da unidade, para a pagina de pagamento.",
+    "notes": "JOINs com alias (l./c./u.) -> inequivocos. Coluna real lida e pix_copia_cola (aliasada AS brcode). unit_cnpj e NULL::TEXT literal, nao coluna lida. clientes_cobranca_dashboard e tabela do n8n. LEFT JOIN clientes_cobranca_dashboard por matricula e units por id."
+  },
+  {
+    "funcao": "get_pay_receipt",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "pagamentos",
+        "columns": [
+          "correlation_id",
+          "matricula",
+          "valor",
+          "data_pagamento",
+          "created_at",
+          "unit_id",
+          "name"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "clientes_cobranca_dashboard",
+        "columns": [
+          "matricula",
+          "name"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "units",
+        "columns": [
+          "id",
+          "name"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "links_pagamentos_gerados",
+        "columns": [
+          "correlation_id",
+          "pix_gateway"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Retorna o recibo de um pagamento (matricula, valor, data, cliente, unidade) pelo correlation_id, somente se houve link gerado via gateway 'abacate'.",
+    "notes": "SQL function. unit_cnpj e' sempre NULL::TEXT. JOINs LEFT em clientes_cobranca_dashboard e units; EXISTS em links_pagamentos_gerados. Aliases p/c/u/l deixam colunas inequivocas."
+  },
+  {
+    "funcao": "get_phone_pending_debts",
+    "security_definer": false,
+    "search_path": null,
+    "reads": [
+      {
+        "table": "clientes_cobranca_setembro",
+        "columns": [
+          "matricula",
+          "name",
+          "valor_inadimplente",
+          "regua",
+          "unit_id",
+          "whatsapp",
+          "pagamento_feito"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "links_pagamentos_gerados",
+        "columns": [
+          "matricula",
+          "unit_id",
+          "cancelado_at",
+          "expires_at",
+          "data_link_gerado",
+          "link_pagamento",
+          "created_at"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Lista dividas pendentes de um whatsapp/unidade a partir de clientes_cobranca_setembro, indicando se ja existe link de pagamento ativo e qual o link.",
+    "notes": "SQL function SEM SECURITY DEFINER (sem search_path). Aliases ccs e l tornam colunas inequivocas. Dois subselects correlacionados em links_pagamentos_gerados (EXISTS e busca do link mais recente)."
+  },
+  {
+    "funcao": "get_regua_totals",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "pagamentos",
+        "columns": [
+          "valor",
+          "regua",
+          "data_pagamento",
+          "reembolso_realizado"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Agrega totais e contagens de pagamentos por bucket de regua (NR, 1, 2, demais) num intervalo de datas, dividindo valor por 100 (centavos -> reais).",
+    "notes": "SQL STABLE. CTE 'classified' sobre tabela unica pagamentos; todas as colunas pertencem a pagamentos. Filtra reembolso_realizado IS NOT TRUE."
+  },
+  {
+    "funcao": "get_unit_details",
+    "security_definer": true,
+    "search_path": null,
+    "reads": [
+      {
+        "table": "units",
+        "columns": [
+          "id",
+          "name",
+          "code",
+          "created_at",
+          "updated_at"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "user_roles",
+        "columns": [
+          "user_id",
+          "role"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "user_unit_permissions",
+        "columns": [
+          "unit_id",
+          "permission",
+          "user_id",
+          "is_active"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [
+      "auth.uid()"
+    ],
+    "purpose": "Retorna detalhes de uma unidade (por code) com as permissoes do usuario autenticado; admin recebe todas as permissoes, demais recebem suas permissoes ativas em user_unit_permissions.",
+    "notes": "plpgsql STABLE, sem SET search_path explicito. Verifica admin via user_roles. Alias uup em user_unit_permissions. Permissoes de admin sao hardcoded como array literal de TEXT."
+  },
+  {
+    "funcao": "get_user_accessible_units",
+    "security_definer": true,
+    "search_path": null,
+    "reads": [
+      {
+        "table": "user_roles",
+        "columns": [
+          "user_id",
+          "role"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "units",
+        "columns": [
+          "id",
+          "name",
+          "code"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "user_unit_permissions",
+        "columns": [
+          "unit_id",
+          "permission",
+          "user_id",
+          "is_active"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [
+      "auth.uid()"
+    ],
+    "purpose": "Lista as unidades acessiveis ao usuario autenticado com suas permissoes; admin ve todas as unidades com todas as permissoes, demais veem apenas unidades com permissoes ativas.",
+    "notes": "plpgsql STABLE, sem SET search_path explicito. Verifica admin via user_roles; junta units com user_unit_permissions (alias uup) para nao-admins. Permissoes de admin hardcoded."
+  },
+  {
+    "funcao": "get_users_with_emails",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "profiles",
+        "columns": [
+          "user_id",
+          "name",
+          "is_active"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "auth.users",
+        "columns": [
+          "id",
+          "email"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Retorna lista de usuarios (user_id, nome, email, ativo) juntando profiles com auth.users.",
+    "notes": "SQL STABLE. Acessa schema auth (auth.users) via SECURITY DEFINER. Aliases p e u tornam colunas inequivocas; is_active vem de profiles (COALESCE default true)."
+  },
+  {
+    "funcao": "grant_multiple_permissions",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [],
+    "writes": [],
+    "calls_rpcs": [
+      "grant_unit_permission()"
+    ],
+    "external": [],
+    "purpose": "Concede multiplas permissoes a um usuario numa unidade iterando sobre o array de permissoes e delegando cada uma a grant_unit_permission; retorna contagem de sucessos e erros.",
+    "notes": "plpgsql. Nao acessa tabelas diretamente; toda gravacao ocorre dentro de grant_unit_permission. Loop FOREACH com tratamento de excecao por item."
+  },
+  {
+    "funcao": "grant_unit_permission",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "auth.users",
+        "columns": [
+          "id",
+          "email"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "units",
+        "columns": [
+          "id",
+          "code"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [
+      {
+        "table": "user_unit_permissions",
+        "op": "upsert",
+        "columns": [
+          "user_id",
+          "unit_id",
+          "permission",
+          "granted_by",
+          "is_active",
+          "granted_at",
+          "updated_at"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [
+      "has_role()"
+    ],
+    "external": [],
+    "purpose": "Concede (ou reativa via upsert) uma permissao a um usuario (por email) numa unidade (por code), apenas se o chamador for admin.",
+    "notes": "plpgsql. INSERT ... ON CONFLICT (user_id, unit_id, permission) DO UPDATE em user_unit_permissions. _granted_by default auth.uid(). Acessa auth.users. Valida admin via has_role."
+  },
+  {
+    "funcao": "guard_recent_payment_dashboard",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "pagamentos",
+        "columns": [
+          "data_pagamento",
+          "forma_pagamento",
+          "correlation_id",
+          "matricula",
+          "reembolso_realizado"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [
+      {
+        "table": "clientes_cobranca_dashboard",
+        "op": "update",
+        "columns": [
+          "pagamento_feito",
+          "data_pagamento",
+          "plataforma_pagamento_utilizada",
+          "correlation_id"
+        ],
+        "confidence": "inferido"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Trigger BEFORE que, ao inserir/atualizar uma linha de cobranca, detecta pagamento recente (ultimas 48h, nao reembolsado) em pagamentos pela matricula e marca a linha como paga, preenchendo data, plataforma e correlation_id.",
+    "notes": "Trigger handler (RETURNS trigger). Tabela alvo inferida como clientes_cobranca_dashboard pelo nome e pelas colunas de NEW (pagamento_feito, plataforma_pagamento_utilizada, correlation_id); a escrita e' via NEW dentro de trigger BEFORE, nao DML explicito."
+  },
+  {
+    "funcao": "guard_recent_payment_setembro",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "pagamentos",
+        "columns": [
+          "data_pagamento",
+          "forma_pagamento",
+          "matricula",
+          "reembolso_realizado"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [
+      {
+        "table": "clientes_cobranca_setembro",
+        "op": "update",
+        "columns": [
+          "pagamento_feito",
+          "data_pagamento",
+          "plataforma_pagamento_utilizada"
+        ],
+        "confidence": "inferido"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Trigger BEFORE que detecta pagamento recente (ultimas 48h, nao reembolsado) em pagamentos pela matricula da linha de cobranca e marca a linha como paga com data e plataforma.",
+    "notes": "Trigger handler (RETURNS trigger). Tabela alvo inferida como clientes_cobranca_setembro pelo nome; escrita via NEW. Identico a guard_recent_payment_dashboard, mas sem propagar correlation_id."
+  },
+  {
+    "funcao": "handle_new_user",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "units",
+        "columns": [
+          "id"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [
+      {
+        "table": "profiles",
+        "op": "insert",
+        "columns": [
+          "user_id",
+          "name"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "user_roles",
+        "op": "insert",
+        "columns": [
+          "user_id",
+          "role"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "user_unit_permissions",
+        "op": "insert",
+        "columns": [
+          "user_id",
+          "unit_id",
+          "permission"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Trigger AFTER INSERT em auth.users que provisiona o novo usuario: cria profile, atribui role (admin para emails fixos, senao user) e, se admin, concede permissao admin em todas as units.",
+    "notes": "Trigger handler em auth.users (usa NEW.id, NEW.email, NEW.raw_user_meta_data). Emails admin hardcoded (victor@7bee.com, andre@7bee.com). INSERT em user_unit_permissions via SELECT sobre units (alias u)."
+  },
+  {
+    "funcao": "has_role",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "user_roles",
+        "columns": [
+          "user_id",
+          "role"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Helper que verifica se um usuario possui determinado role em user_roles, retornando boolean.",
+    "notes": "SQL STABLE SECURITY DEFINER. Alias ur torna colunas inequivocas. Funcao base usada por grant_unit_permission e provavelmente por politicas RLS."
+  },
+  {
+    "funcao": "has_unit_permission",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "user_unit_permissions",
+        "columns": [
+          "user_id",
+          "unit_id",
+          "permission",
+          "is_active"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "units",
+        "columns": [
+          "id",
+          "code"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [
+      "has_role"
+    ],
+    "external": [],
+    "purpose": "Verifica se um usuario tem determinada permissao numa unidade (por code), retornando true se for admin ou se houver permissao ativa em user_unit_permissions.",
+    "notes": "Join user_unit_permissions uup x units u por uup.unit_id=u.id; colunas inequivocamente ligadas via alias. Chama has_role para curto-circuito de admin."
+  },
+  {
+    "funcao": "is_blacklisted",
+    "security_definer": false,
+    "search_path": null,
+    "reads": [
+      {
+        "table": "blacklist_global",
+        "columns": [
+          "whatsapp"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Retorna true se o numero de WhatsApp informado consta na blacklist global (opt-out/bloqueio de envio).",
+    "notes": "Funcao SQL STABLE simples; sem search_path setado."
+  },
+  {
+    "funcao": "isa_registrar_opt_out",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [],
+    "writes": [
+      {
+        "table": "adimplentes_base",
+        "op": "update",
+        "columns": [
+          "relacionamento_opt_out",
+          "updated_at"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [
+      "norm_phone_br"
+    ],
+    "external": [],
+    "purpose": "Registra opt-out de relacionamento para um telefone normalizado, marcando relacionamento_opt_out=true nas linhas atuais (bi_atual) de adimplentes_base.",
+    "notes": "Filtra por norm_phone_br(telefone)=v_norm e bi_atual; chama RPC norm_phone_br. Le adimplentes_base.telefone e adimplentes_base.bi_atual no WHERE do UPDATE (predicado, nao listado em reads separado)."
+  },
+  {
+    "funcao": "limpar_links_pagamento_expirados",
+    "security_definer": false,
+    "search_path": null,
+    "reads": [
+      {
+        "table": "links_pagamentos_gerados",
+        "columns": [
+          "link_pagamento",
+          "cancelado_at",
+          "status",
+          "expires_at"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [
+      {
+        "table": "clientes_cobranca_setembro",
+        "op": "update",
+        "columns": [
+          "link_pagamento",
+          "correlation_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "clientes_cobranca_dashboard",
+        "op": "update",
+        "columns": [
+          "link_pagamento",
+          "correlation_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "log_limpeza_links",
+        "op": "insert",
+        "columns": [
+          "registros_atualizados",
+          "detalhe"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Limpa (NULL) link_pagamento/correlation_id em clientes_cobranca_setembro e _dashboard para links mortos (cancelados/expirados/pagos) e registra a limpeza em log_limpeza_links.",
+    "notes": "Usa CTE 'dead' sobre links_pagamentos_gerados para UPDATE...FROM nas duas tabelas de cobranca. Toca tabelas do dominio cobranca (n8n)."
+  },
+  {
+    "funcao": "link_payout_charges",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "payouts",
+        "columns": [
+          "id",
+          "unit_id",
+          "status",
+          "platform",
+          "completed_at",
+          "updated_at",
+          "created_at"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "pagamentos",
+        "columns": [
+          "id",
+          "valor",
+          "unit_id",
+          "correlation_id",
+          "data_pagamento"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "links_pagamentos_gerados",
+        "columns": [
+          "correlation_id",
+          "plataforma_pagamento_utilizada"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [
+      {
+        "table": "payout_pagamentos",
+        "op": "insert",
+        "columns": [
+          "payout_id",
+          "pagamento_id",
+          "valor_bruto_cents",
+          "valor_taxa_cents"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Vincula pagamentos PIX (Abacate Pay) de uma unidade a um payout COMPLETE dentro da janela entre o payout anterior e o atual, inserindo em payout_pagamentos com taxa fixa de 80 centavos por charge.",
+    "notes": "INSERT ... SELECT da CTE candidatos (join pagamentos p x links_pagamentos_gerados l por correlation_id) com ON CONFLICT(pagamento_id) DO NOTHING. valor_taxa_cents vem de constante 80, valor_bruto_cents de p.valor. Periodo derivado de payouts."
+  },
+  {
+    "funcao": "log_event",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [],
+    "writes": [
+      {
+        "table": "event_log",
+        "op": "insert",
+        "columns": [
+          "actor_type",
+          "actor_id",
+          "actor_name",
+          "actor_url",
+          "event_type",
+          "entity_type",
+          "entity_id",
+          "source_system",
+          "source_detail",
+          "correlation_id",
+          "parent_event_id",
+          "unit_id",
+          "cliente_id",
+          "before_data",
+          "after_data",
+          "metadata"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Insere um registro de auditoria/evento em event_log (com validacao do actor_type) e retorna o id gerado.",
+    "notes": "Valida actor_type IN (HUMAN/AUTOMATION/SYSTEM/EXTERNAL) antes do INSERT; RETURNING id."
+  },
+  {
+    "funcao": "mark_refund_by_correlation",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "pagamentos",
+        "columns": [
+          "id",
+          "reembolso_realizado",
+          "correlation_id",
+          "created_at"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [
+      {
+        "table": "pagamentos",
+        "op": "update",
+        "columns": [
+          "reembolso_realizado",
+          "reembolso_realizado_at",
+          "reembolso_motivo",
+          "reembolso_realizado_by"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "clientes_cobranca_dashboard",
+        "op": "update",
+        "columns": [
+          "reembolso_realizado",
+          "reembolso_realizado_at",
+          "reembolso_motivo",
+          "reembolso_realizado_by"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Marca um pagamento (achado por correlation_id, o mais recente) como reembolsado em pagamentos e espelha o estorno em clientes_cobranca_dashboard, com idempotencia se ja reembolsado.",
+    "notes": "SELECT inicial em pagamentos para localizar id e flag reembolso_realizado; depois dois UPDATEs. clientes_cobranca_dashboard atualizada por correlation_id (tabela do dominio cobranca)."
+  },
+  {
+    "funcao": "mirror_disparo_fields_to_dashboard",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [],
+    "writes": [
+      {
+        "table": "clientes_cobranca_dashboard",
+        "op": "update",
+        "columns": [
+          "disparos",
+          "disparos_equipe",
+          "disparado com sucesso",
+          "data_ultimo_disparo",
+          "status",
+          "cadence_fase",
+          "cadence_dia_ciclo",
+          "cadence_slot",
+          "cadence_variante",
+          "cadence_proximo_envio_at",
+          "cadence_ultimo_template",
+          "cadence_branch_state",
+          "cadence_entrou_em",
+          "regua_at_entry",
+          "last_inbound_at",
+          "slots_enviados_hoje",
+          "slots_enviados_hoje_data",
+          "last_resgate_ia_at",
+          "updated_at"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Trigger que espelha campos de disparo e cadencia (Strategic Swarm) de uma linha NEW para clientes_cobranca_dashboard, casando por matricula.",
+    "notes": "Trigger handler (RETURNS trigger, usa NEW); atua sobre a tabela origem dos campos de disparo/cadencia (provavelmente clientes_cobranca_setembro ou tabela de disparos) e escreve em clientes_cobranca_dashboard WHERE matricula=NEW.matricula. Tabela de origem nao identificavel apenas pelo corpo. Coluna com espaco 'disparado com sucesso' entre aspas."
+  },
+  {
+    "funcao": "motor_v2_adimplentes_finalize",
+    "security_definer": false,
+    "search_path": null,
+    "reads": [],
+    "writes": [
+      {
+        "table": "adimplentes_base",
+        "op": "update",
+        "columns": [
+          "bi_atual",
+          "updated_at"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "adimplentes_import_log",
+        "op": "insert",
+        "columns": [
+          "batch_id",
+          "unit_id",
+          "file_name",
+          "file_id_drive",
+          "rows_total",
+          "rows_new",
+          "rows_updated",
+          "rows_removed",
+          "imported_at"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Finaliza importacao de adimplentes: marca bi_atual=false nas linhas da unidade que nao pertencem ao batch atual (efeito de exclusao logica) e grava um log da importacao em adimplentes_import_log.",
+    "notes": "UPDATE adimplentes_base WHERE unit_id=p_unit_id AND bi_atual AND import_batch_id IS DISTINCT FROM p_batch_id (le unit_id/bi_atual/import_batch_id no predicado). Sem SECURITY DEFINER nem search_path."
+  },
+  {
+    "funcao": "motor_v2_adimplentes_upsert",
+    "security_definer": false,
+    "search_path": null,
+    "reads": [],
+    "writes": [
+      {
+        "table": "adimplentes_base",
+        "op": "upsert",
+        "columns": [
+          "unit_id",
+          "matricula",
+          "telefone",
+          "nome",
+          "status",
+          "raw_data",
+          "bi_atual",
+          "import_batch_id",
+          "imported_at",
+          "updated_at"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Faz upsert em lote de registros de adimplentes (vindos de jsonb) em adimplentes_base por (unit_id, matricula), marcando bi_atual=true, e retorna contagem de novos vs atualizados.",
+    "notes": "INSERT ... ON CONFLICT (unit_id, matricula) DO UPDATE; fonte e jsonb_array_elements(p_records) parseado para colunas; contagem new/updated via xmax=0. Sem search_path setado."
+  },
+  {
+    "funcao": "motor_v2_avancar_dia",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [],
+    "writes": [
+      {
+        "table": "cliente_cadencia",
+        "op": "update",
+        "columns": [
+          "dia_ciclo",
+          "last_advance_date",
+          "updated_at"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Avanca o dia do ciclo de cadencia (dia_ciclo+1) para cadencias ACTIVE/PAUSED_REGUA_MORTA ainda nao avancadas na data alvo, opcionalmente filtrando por unidade; retorna nro de linhas afetadas.",
+    "notes": "UPDATE cliente_cadencia com predicados em status, last_advance_date, unit_id (lidos no WHERE). Retorna ROW_COUNT."
+  },
+  {
+    "funcao": "motor_v2_build_components",
+    "security_definer": false,
+    "search_path": null,
+    "reads": [],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Funcao pura (IMMUTABLE) que monta o array de 'components' de um template WhatsApp, preenchendo parametros de header/body/buttons com nome, valor, matricula e link.",
+    "notes": "Nao toca tabelas; processa apenas jsonb de entrada via jsonb_array_elements e regex sobre o texto dos componentes. Heuristica de mapeamento de variaveis {{n}} por contexto (R$, matricula, nome)."
+  },
+  {
+    "funcao": "motor_v2_cancel_future_disparos",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [],
+    "writes": [
+      {
+        "table": "disparos_log",
+        "op": "update",
+        "columns": [
+          "status",
+          "status_detail",
+          "updated_at",
+          "matricula",
+          "unit_id",
+          "scheduled_for"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Cancela (marca como PULADA) todos os disparos PROGRAMADOS futuros de uma matricula/unidade, usado quando o cliente e bloqueado.",
+    "notes": "UPDATE de tabela unica (disparos_log); colunas do WHERE (matricula/unit_id/status/scheduled_for) sao inequivocas pois ha so uma tabela em escopo. status/status_detail/updated_at sao colunas escritas literalmente. Retorna ROW_COUNT afetado."
+  },
+  {
+    "funcao": "motor_v2_finalizar_dia22",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "cliente_cadencia",
+        "columns": [
+          "id",
+          "unit_id",
+          "matricula",
+          "telefone",
+          "nome",
+          "status",
+          "dia_ciclo"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [
+      {
+        "table": "cliente_cadencia",
+        "op": "update",
+        "columns": [
+          "status",
+          "finalizado_at",
+          "updated_at"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "fila_humana",
+        "op": "insert",
+        "columns": [
+          "unit_id",
+          "matricula",
+          "telefone",
+          "nome",
+          "cliente_cadencia_id",
+          "motivo",
+          "motivo_detalhe"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Finaliza cadencias que passaram do dia 21 do ciclo (sem pagamento) e enfileira esses clientes na fila humana com motivo FINALIZOU_21D.",
+    "notes": "CTE 'finalized' com UPDATE...RETURNING em cliente_cadencia alimenta INSERT em fila_humana. Colunas do RETURNING (id, unit_id, matricula, telefone, nome) sao lidas de cliente_cadencia; dia_ciclo e status no WHERE. p_target_date entra so no texto do motivo_detalhe."
+  },
+  {
+    "funcao": "motor_v2_get_disparos",
+    "security_definer": false,
+    "search_path": null,
+    "reads": [
+      {
+        "table": "disparadores_whatsapp",
+        "columns": [
+          "numero_telefone",
+          "waba_id",
+          "waba_token",
+          "unit_id",
+          "ativo",
+          "id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "gate_state",
+        "columns": [
+          "reguas_efetivas",
+          "unit_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "clientes_cobranca_setembro",
+        "columns": [
+          "matricula",
+          "unit_id",
+          "whatsapp",
+          "name",
+          "regua",
+          "pagamento_feito",
+          "bloqueio_disparos",
+          "valor_inadimplente",
+          "disparos_pausados_ate"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "pagamentos",
+        "columns": [
+          "unit_id",
+          "matricula",
+          "created_at"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "cliente_cadencia",
+        "columns": [
+          "matricula",
+          "telefone",
+          "nome",
+          "regua",
+          "dia_ciclo",
+          "unit_id",
+          "status",
+          "last_advance_date"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "cadence_calendar",
+        "columns": [
+          "regua",
+          "dia_ciclo",
+          "slot_index",
+          "action_type"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "template_inventory",
+        "columns": [
+          "waba_id",
+          "template_name",
+          "components"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [
+      {
+        "table": "cliente_cadencia",
+        "op": "insert",
+        "columns": [
+          "matricula",
+          "unit_id",
+          "telefone",
+          "nome",
+          "regua",
+          "dia_ciclo",
+          "ciclo_numero",
+          "entrou_em",
+          "status",
+          "last_advance_date",
+          "created_at",
+          "updated_at"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "cliente_cadencia",
+        "op": "update",
+        "columns": [
+          "dia_ciclo",
+          "last_advance_date",
+          "updated_at",
+          "status",
+          "finalizado_at",
+          "pago_at",
+          "paused_at"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [
+      "motor_v2_pick_template",
+      "motor_v2_build_components"
+    ],
+    "external": [],
+    "purpose": "Motor de cobranca v2: gera o batch de disparos WhatsApp de um slot/unidade, fazendo seed de novas cadencias, avanco de ciclo, saidas (pago/bloqueado) e montando o payload de template Meta.",
+    "notes": "Funcao complexa com efeitos colaterais antes do RETURN QUERY. Escreve cliente_cadencia em 1 INSERT (seed) e varios UPDATEs (avanco: dia_ciclo/last_advance_date; finaliza: status/finalizado_at; PAGO: status/pago_at; PAUSED_BLOQUEADO: status/paused_at) — colunas de update unidas. Usa #variable_conflict use_column. Telefone normalizado via regexp_replace inline (NAO norm_phone_br). Chama motor_v2_pick_template(4-arg) via cross join lateral e motor_v2_build_components no payload. NAO e SECURITY DEFINER. cadence_calendar.action_type filtrado != PAUSA/NONE."
+  },
+  {
+    "funcao": "motor_v2_inicio_semana_sp",
+    "security_definer": false,
+    "search_path": null,
+    "reads": [],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Retorna o timestamp de inicio da semana corrente no fuso America/Sao_Paulo (helper de janelamento semanal do motor de relacionamento).",
+    "notes": "Funcao SQL pura STABLE, sem acesso a tabelas. Apenas date_trunc/timezone sobre now()."
+  },
+  {
+    "funcao": "motor_v2_invoke_edge",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "vault.decrypted_secrets",
+        "columns": [
+          "decrypted_secret",
+          "name"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [
+      {
+        "table": "event_log",
+        "op": "insert",
+        "columns": [
+          "actor_type",
+          "actor_id",
+          "actor_name",
+          "event_type",
+          "source_system",
+          "source_detail",
+          "metadata"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [
+      "net.http_post"
+    ],
+    "purpose": "Invoca uma Supabase Edge Function por HTTP (com x-api-key do vault) e registra a invocacao no event_log; usado por jobs pg_cron do motor.",
+    "notes": "Le segredo motor_v2_api_key de vault.decrypted_secrets (cross-schema vault). Efeito externo via net.http_post (pg_net) para functions/v1/<p_function_name>. RAISE EXCEPTION se segredo ausente. Retorna request_id do net.http_post."
+  },
+  {
+    "funcao": "motor_v2_pick_template",
+    "security_definer": false,
+    "search_path": null,
+    "reads": [
+      {
+        "table": "template_inventory",
+        "columns": [
+          "template_name",
+          "meta_template_id",
+          "waba_id",
+          "status",
+          "category",
+          "paused_by_sentinel"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Sorteia um template Meta aprovado/UTILITY do inventario para uma regua+dia de ciclo (ou pool de sabado/fechamento quando dia_ciclo e null) no motor de cobranca.",
+    "notes": "Overload 3-arg (p_waba_id, p_regua, p_dia_ciclo). Le apenas template_inventory; resolve o dia do pool por regexp_match no template_name (maior dia <= dia_ciclo). order by random() limit 1. Sem SECURITY DEFINER."
+  },
+  {
+    "funcao": "motor_v2_pick_template",
+    "security_definer": false,
+    "search_path": null,
+    "reads": [
+      {
+        "table": "template_inventory",
+        "columns": [
+          "template_name",
+          "meta_template_id",
+          "waba_id",
+          "status",
+          "category",
+          "paused_by_sentinel"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Variante de motor_v2_pick_template que aceita um nonce para tornar o sorteio do template deterministico/desempatado por chamada no batch.",
+    "notes": "Overload 4-arg (p_waba_id, p_regua, p_dia_ciclo, p_nonce). Identica em logica ao overload 3-arg, mas ordena por md5(coalesce(p_nonce,'')||random()::text) em vez de random(). Le apenas template_inventory. Sem SECURITY DEFINER. Mesmo nome de funcao do item anterior (disambiguado pelo nonce)."
+  },
+  {
+    "funcao": "motor_v2_recalc_gate",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "disparadores_whatsapp",
+        "columns": [
+          "numero_telefone",
+          "unit_id",
+          "ativo"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "phone_health",
+        "columns": [
+          "phone_number_id",
+          "quality_rating",
+          "observed_at"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "system_state",
+        "columns": [
+          "key",
+          "value"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "gate_config",
+        "columns": [
+          "reguas_ativas",
+          "relacionamento_ratio",
+          "health_color"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [
+      {
+        "table": "gate_state",
+        "op": "upsert",
+        "columns": [
+          "unit_id",
+          "health_color_calc",
+          "health_color_override",
+          "health_color_efetivo",
+          "reguas_efetivas",
+          "relacionamento_ratio",
+          "worst_phone_id",
+          "worst_phone_color",
+          "last_evaluated_at",
+          "updated_at"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Recalcula o estado do gate de saude (cor de qualidade) de uma unidade a partir do phone_health, overrides do system_state e reguas do gate_config, e faz upsert em gate_state.",
+    "notes": "Le phone_health (snapshot mais recente por DISTINCT ON), disparadores_whatsapp (numeros ativos), system_state (override de cor e cap de reguas via keys motor_v2_gate_override_color/motor_v2_reguas_override) e gate_config. UPSERT (INSERT...ON CONFLICT unit_id DO UPDATE) em gate_state com RETURNING *. Retorna o registro gate_state."
+  },
+  {
+    "funcao": "motor_v2_relacionamento_get_disparos",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "disparadores_whatsapp",
+        "columns": [
+          "numero_telefone",
+          "waba_id",
+          "waba_token",
+          "chatwoot_inbox_id",
+          "unit_id",
+          "ativo",
+          "id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "adimplentes_base",
+        "columns": [
+          "id",
+          "matricula",
+          "telefone",
+          "nome",
+          "unit_id",
+          "bi_atual",
+          "relacionamento_opt_out",
+          "last_relacionamento_at"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "clientes_cobranca_setembro",
+        "columns": [
+          "unit_id",
+          "pagamento_feito",
+          "whatsapp"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "template_inventory",
+        "columns": [
+          "template_name",
+          "meta_template_id",
+          "category",
+          "components",
+          "waba_id",
+          "status",
+          "paused_by_sentinel"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [
+      {
+        "table": "adimplentes_base",
+        "op": "update",
+        "columns": [
+          "last_relacionamento_at",
+          "last_relacionamento_template",
+          "updated_at"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [
+      "motor_v2_inicio_semana_sp",
+      "norm_phone_br",
+      "motor_v2_build_components"
+    ],
+    "external": [],
+    "purpose": "Seleciona ate p_limit clientes adimplentes elegiveis para mensagem de relacionamento semanal, monta o payload de template e marca cada um como contatado em adimplentes_base.",
+    "notes": "Candidatos: adimplentes_base com bi_atual, sem opt-out, fora da janela semanal e que NAO estejam inadimplentes (NOT EXISTS em clientes_cobranca_setembro via norm_phone_br). FOR UPDATE SKIP LOCKED. CTE 'upd' faz UPDATE em adimplentes_base (last_relacionamento_at/template/updated_at). Chama motor_v2_inicio_semana_sp, norm_phone_br e motor_v2_build_components. Sorteia template rel_* via random()."
+  },
+  {
+    "funcao": "motor_v2_relacionamento_stats",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "adimplentes_base",
+        "columns": [
+          "bi_atual",
+          "telefone",
+          "relacionamento_opt_out",
+          "last_relacionamento_at",
+          "unit_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "clientes_cobranca_setembro",
+        "columns": [
+          "unit_id",
+          "pagamento_feito",
+          "whatsapp"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [
+      "motor_v2_inicio_semana_sp",
+      "norm_phone_br"
+    ],
+    "external": [],
+    "purpose": "Retorna metricas do funil de relacionamento de uma unidade: total da base, elegiveis na semana, contactados na semana e contactados hoje.",
+    "notes": "STABLE SECURITY DEFINER, somente leitura. Usa filtros count(*) FILTER sobre adimplentes_base; NOT EXISTS em clientes_cobranca_setembro (inadimplentes) via norm_phone_br. Chama motor_v2_inicio_semana_sp para o corte semanal."
+  },
+  {
+    "funcao": "norm_phone_br",
+    "security_definer": false,
+    "search_path": null,
+    "reads": [],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Normaliza um numero de telefone brasileiro para o formato 55+DDD+9+8digitos (insere DDI e o nono digito conforme o tamanho), helper de matching de telefone.",
+    "notes": "Funcao SQL pura IMMUTABLE, sem acesso a tabelas. Apenas regexp_replace/substr/length sobre o argumento de texto."
+  },
+  {
+    "funcao": "notify_orphan_payment_created",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "app_internal_config",
+        "columns": [
+          "value",
+          "key"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [
+      "net.http_post"
+    ],
+    "purpose": "Trigger handler que, ao criar um pagamento orfao, dispara (best-effort) um email via edge function notify-orphan-email com os dados do orfao.",
+    "notes": "Trigger handler (RETURNS trigger). Le chave NOTIFY_ORPHAN_INTERNAL_KEY de public.app_internal_config. Efeito externo via net.http_post (pg_net) para edge function notify-orphan-email; falha e capturada (EXCEPTION WHEN OTHERS -> RAISE WARNING) pra nao bloquear o INSERT. Colunas NEW.* (id, source, gateway_correlation_id, valor, data_pagamento, payer_name, payer_phone) sao payload da linha inserida, NAO um FROM/JOIN; tabela-fonte inferida e a de pagamentos orfaos (orphan/orfaos). Nenhum INSERT/UPDATE/DELETE proprio."
+  },
+  {
+    "funcao": "picker_select_batch",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "system_state",
+        "columns": [
+          "value",
+          "key"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "cadence_slot_config",
+        "columns": [
+          "janela_inicio",
+          "janela_fim",
+          "fase",
+          "dia_ciclo",
+          "slot",
+          "template_pool_like"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "template_inventory",
+        "columns": [
+          "waba_id",
+          "status",
+          "category",
+          "template_name",
+          "paused_by_sentinel",
+          "meta_template_id",
+          "body_text"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "clientes_cobranca_setembro",
+        "columns": [
+          "unit_id",
+          "cadence_fase",
+          "cadence_dia_ciclo",
+          "slots_enviados_hoje",
+          "cadence_branch_state",
+          "pagamento_feito",
+          "bloqueio_disparos",
+          "disparos_pausados_ate",
+          "cadence_proximo_envio_at",
+          "matricula",
+          "name",
+          "whatsapp",
+          "valor_inadimplente"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [
+      {
+        "table": "clientes_cobranca_setembro",
+        "op": "update",
+        "columns": [
+          "slots_enviados_hoje",
+          "slots_enviados_hoje_data"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "clientes_cobranca_setembro",
+        "op": "update",
+        "columns": [
+          "cadence_proximo_envio_at"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Seleciona e trava (FOR UPDATE SKIP LOCKED) um lote de inadimplentes elegíveis por slot/fase/dia-ciclo da cadência, escolhe template aprovado do pool e retorna o batch para disparo de cobrança.",
+    "notes": "Não é trigger; RPC RETURNS TABLE. clientes_cobranca_setembro aparece como read (COUNT de elegíveis + CTE picked com FOR UPDATE OF c SKIP LOCKED) e como write (dois UPDATEs: reset diário de slots e lock do cadence_proximo_envio_at). template_inventory é lido em dois pontos (COUNT do pool e LATERAL de escolha aleatória do template). Usa now() AT TIME ZONE 'America/Sao_Paulo', random(), CEIL/LEAST/GREATEST (builtins, não contam como rpc)."
+  },
+  {
+    "funcao": "reconcile_orfao",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "pagamentos_orfaos",
+        "columns": [
+          "id",
+          "reconciliado",
+          "pagamento_id",
+          "source",
+          "gateway_correlation_id",
+          "payer_name",
+          "payer_phone",
+          "valor",
+          "data_pagamento",
+          "gateway_charge_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "clientes_cobranca_dashboard",
+        "columns": [
+          "unit_id",
+          "name",
+          "whatsapp",
+          "regua",
+          "matricula"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [
+      {
+        "table": "pagamentos_orfaos",
+        "op": "update",
+        "columns": [
+          "reconciliado",
+          "reconciliado_at",
+          "reconciliado_by",
+          "matricula_reconciliada",
+          "pagamento_id",
+          "updated_at"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [
+      "register_payment"
+    ],
+    "external": [],
+    "purpose": "Reconcilia um pagamento órfão (sem matrícula identificada) vinculando-o a uma matrícula informada, normaliza a forma de pagamento (woovi/abacate→pix), registra o pagamento via register_payment e marca o órfão como reconciliado.",
+    "notes": "Não é trigger. Faz SELECT * INTO v_orfao (%ROWTYPE) de pagamentos_orfaos e dereferencia colunas específicas (v_orfao.source/reconciliado/valor/gateway_correlation_id/etc.) — o ROWTYPE liga inequivocamente cada coluna à tabela, por isso confirmado. clientes_cobranca_dashboard é SELECT explícito de colunas nomeadas (confirmado)."
+  },
+  {
+    "funcao": "record_inbound_message",
+    "security_definer": true,
+    "search_path": null,
+    "reads": [
+      {
+        "table": "disparadores_whatsapp",
+        "columns": [
+          "unit_id",
+          "numero_telefone"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [
+      {
+        "table": "message_inbound",
+        "op": "insert",
+        "columns": [
+          "wamid",
+          "from_phone",
+          "phone_number_id",
+          "unit_id",
+          "type",
+          "body",
+          "is_optout",
+          "received_at",
+          "raw_value"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Persiste uma mensagem inbound do WhatsApp (extrai wamid/from/type/body do payload Meta, detecta opt-out por regex, resolve unit_id pelo phone_number_id) inserindo de forma idempotente em message_inbound.",
+    "notes": "Não é trigger; RPC. Sem SET search_path (search_path=null). INSERT com ON CONFLICT (wamid) DO NOTHING → insert idempotente, não upsert. v_unit_id vem de subselect em disparadores_whatsapp. Toda extração de body usa operadores jsonb (builtins)."
+  },
+  {
+    "funcao": "record_message_status",
+    "security_definer": true,
+    "search_path": null,
+    "reads": [],
+    "writes": [
+      {
+        "table": "message_log",
+        "op": "update",
+        "columns": [
+          "status",
+          "status_updated_at",
+          "failure_code",
+          "failure_reason",
+          "delivered_at",
+          "read_at",
+          "failed_at",
+          "conversation_category",
+          "pricing_billable",
+          "pricing_model",
+          "pricing_category",
+          "raw_response",
+          "wa_message_id"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Atualiza o status de entrega/leitura/falha de uma mensagem em message_log a partir do callback de status da Meta (delivered/read/failed + pricing/category), localizando a linha por wa_message_id.",
+    "notes": "Não é trigger; RPC. Sem SET search_path (null). Tabela do n8n (message_log) — apenas UPDATE. wa_message_id é a coluna do WHERE (filtro), incluída entre as colunas escritas/tocadas como confirmado. Não há FROM/JOIN, logo reads vazio."
+  },
+  {
+    "funcao": "record_meta_account_event",
+    "security_definer": true,
+    "search_path": null,
+    "reads": [
+      {
+        "table": "disparadores_whatsapp",
+        "columns": [
+          "unit_id",
+          "waba_id",
+          "numero_telefone"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [
+      {
+        "table": "webhook_events_log",
+        "op": "insert",
+        "columns": [
+          "source",
+          "event_type",
+          "correlation_id",
+          "payload",
+          "processed",
+          "error"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "phone_health",
+        "op": "insert",
+        "columns": [
+          "phone_number_id",
+          "unit_id",
+          "quality_rating",
+          "status",
+          "name_status",
+          "event",
+          "current_limit",
+          "raw_response"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "waba_violations",
+        "op": "insert",
+        "columns": [
+          "waba_id",
+          "unit_id",
+          "event",
+          "violation_type",
+          "restriction_type",
+          "restriction_expires_at",
+          "ban_state",
+          "affected_phone_number",
+          "raw_value",
+          "webhook_event_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "waba_capability",
+        "op": "insert",
+        "columns": [
+          "waba_id",
+          "unit_id",
+          "max_phone_numbers",
+          "max_daily_conversations",
+          "raw_value",
+          "webhook_event_id"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Processa eventos de conta/WABA da Meta (account_update, phone quality/name, business_capability), classifica severidade, loga em webhook_events_log e, conforme o field, grava snapshots em phone_health, waba_violations ou waba_capability.",
+    "notes": "Não é trigger; RPC. Sem SET search_path (null). unit_id resolvido por dois subselects em disparadores_whatsapp (por waba_id, fallback por numero_telefone). Inserts em waba_violations e waba_capability estão em blocos BEGIN...EXCEPTION protegidos. Severidade derivada de p_value via comparações jsonb."
+  },
+  {
+    "funcao": "record_phone_health_snapshot",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [],
+    "writes": [
+      {
+        "table": "phone_health",
+        "op": "insert",
+        "columns": [
+          "phone_number_id",
+          "unit_id",
+          "quality_rating",
+          "messaging_limit_tier",
+          "status",
+          "name_status",
+          "code_verification_status",
+          "raw_response"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Insere um snapshot de saúde de número de telefone (quality_rating, messaging_limit_tier, status, name_status, code_verification) obtido via polling da Graph API em phone_health.",
+    "notes": "Não é trigger; RPC RETURNS bigint. Valida p_phone_id obrigatório (RAISE EXCEPTION). Marca raw_response com '_source'='graph_polling'. Sem reads (apenas INSERT)."
+  },
+  {
+    "funcao": "record_waba_health_snapshot",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [],
+    "writes": [
+      {
+        "table": "waba_health",
+        "op": "insert",
+        "columns": [
+          "waba_id",
+          "unit_id",
+          "name",
+          "account_review_status",
+          "business_verification_status",
+          "status",
+          "country",
+          "currency",
+          "health_status",
+          "raw_response"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Insere um snapshot de saúde de WABA (account_review_status, business_verification_status, status, country, currency, health_status) obtido via polling da Graph API em waba_health.",
+    "notes": "Não é trigger; RPC RETURNS bigint. Valida p_waba_id obrigatório (RAISE EXCEPTION). Marca raw_response com '_source'='graph_polling'. Sem reads (apenas INSERT)."
+  },
+  {
+    "funcao": "register_payment",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "links_pagamentos_gerados",
+        "columns": [
+          "gateway_charge_id",
+          "correlation_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "pagamentos",
+        "columns": [
+          "created_at",
+          "id"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [
+      {
+        "table": "pagamentos",
+        "op": "upsert",
+        "columns": [
+          "correlation_id",
+          "matricula",
+          "name",
+          "whatsapp",
+          "valor",
+          "data_pagamento",
+          "regua",
+          "forma_pagamento",
+          "comprovante",
+          "unit_id",
+          "gateway_charge_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "clientes_cobranca_setembro",
+        "op": "update",
+        "columns": [
+          "pagamento_feito",
+          "data_pagamento",
+          "plataforma_pagamento_utilizada",
+          "cadence_proximo_envio_at",
+          "cadence_branch_state",
+          "matricula"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "clientes_cobranca_dashboard",
+        "op": "update",
+        "columns": [
+          "pagamento_feito",
+          "data_pagamento",
+          "plataforma_pagamento_utilizada",
+          "correlation_id",
+          "matricula"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "links_pagamentos_gerados",
+        "op": "update",
+        "columns": [
+          "status",
+          "updated_at",
+          "correlation_id",
+          "cancelado_at"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Registra um pagamento idempotente (upsert por correlation_id em pagamentos), marca o cliente como pago em clientes_cobranca_setembro/dashboard (limpando lock e branch_state da cadência) e marca o link de pagamento como 'paid'.",
+    "notes": "Não é trigger; RPC RETURNS jsonb. pagamentos = INSERT ... ON CONFLICT (correlation_id) DO UPDATE → upsert. As colunas matricula/correlation_id/status/cancelado_at em UPDATEs são filtros WHERE da própria tabela-alvo, contadas como write (não como read separado). Reads reais limitados a links_pagamentos_gerados (resolve gateway_id) e pagamentos (checa created_at para already_existed)."
+  },
+  {
+    "funcao": "resolve_orfao_matricula",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "links_pagamentos_gerados",
+        "columns": [
+          "matricula",
+          "unit_id",
+          "correlation_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "clientes_cobranca_dashboard",
+        "columns": [
+          "matricula",
+          "unit_id",
+          "whatsapp"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Resolve a matrícula/unit de um pagamento órfão, primeiro via match de correlation_id em links_pagamentos_gerados (mais confiável) e, como fallback, via match de telefone normalizado em clientes_cobranca_dashboard.",
+    "notes": "Não é trigger; função STABLE somente leitura (sem writes). regexp_replace é builtin (não rpc). Retorna jsonb com 'via'='links' ou 'phone'."
+  },
+  {
+    "funcao": "revoke_unit_permission",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "auth.users",
+        "columns": [
+          "id",
+          "email"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "units",
+        "columns": [
+          "id",
+          "code"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [
+      {
+        "table": "user_unit_permissions",
+        "op": "update",
+        "columns": [
+          "is_active",
+          "updated_at",
+          "user_id",
+          "unit_id",
+          "permission"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [
+      "has_role"
+    ],
+    "external": [],
+    "purpose": "Revoga (desativa) uma permissão de unidade de um usuário, identificando-o por email e a unidade por code, após checar que o chamador é admin via has_role.",
+    "notes": "Não é trigger; RPC RETURNS text. Checa has_role(auth.uid(),'admin') (custom rpc). Lê auth.users (schema auth) por email e public.units por code. UPDATE em user_unit_permissions filtrado por user_id/unit_id/permission (colunas WHERE da própria tabela, contadas como write)."
+  },
+  {
+    "funcao": "rollback_sync",
+    "security_definer": true,
+    "search_path": "public, pg_temp",
+    "reads": [
+      {
+        "table": "cobranca_sync_backup",
+        "columns": [
+          "unit_id",
+          "snapshot_date",
+          "sync_log_id",
+          "row_data",
+          "source_table"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [
+      {
+        "table": "clientes_cobranca_setembro",
+        "op": "delete",
+        "columns": [
+          "unit_id",
+          "matricula"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "clientes_cobranca_setembro",
+        "op": "insert",
+        "columns": [],
+        "confidence": "inferido"
+      },
+      {
+        "table": "clientes_cobranca_dashboard",
+        "op": "delete",
+        "columns": [
+          "unit_id",
+          "matricula"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "clientes_cobranca_dashboard",
+        "op": "insert",
+        "columns": [],
+        "confidence": "inferido"
+      },
+      {
+        "table": "cobranca_clientes_removidos",
+        "op": "delete",
+        "columns": [
+          "sync_log_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "sync_snapshots",
+        "op": "delete",
+        "columns": [
+          "sync_log_id"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Desfaz um sync de cobrança restaurando o estado das listas viva (clientes_cobranca_setembro) e dashboard a partir do backup em cobranca_sync_backup, e limpa os registros auxiliares de remoção/snapshot daquele sync.",
+    "notes": "Não é trigger; RPC RETURNS jsonb com statement_timeout 180s e search_path 'public, pg_temp'. Cada tabela de cobrança recebe DELETE (cols de filtro confirmadas) + INSERT via jsonb_populate_record(null::tabela, row_data).* — colunas do insert não enumeráveis, por isso inferido (linha completa). Usa pg_advisory_xact_lock/hashtext (builtins)."
+  },
+  {
+    "funcao": "route_inbound",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "clientes_cobranca_setembro",
+        "columns": [
+          "unit_id",
+          "matricula",
+          "name",
+          "whatsapp",
+          "pagamento_feito",
+          "valor_inadimplente",
+          "updated_at"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "units",
+        "columns": [
+          "rabbitmq_queue",
+          "id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "adimplentes_base",
+        "columns": [
+          "unit_id",
+          "matricula",
+          "nome",
+          "telefone",
+          "bi_atual",
+          "updated_at"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [
+      "norm_phone_br"
+    ],
+    "external": [],
+    "purpose": "Roteia uma mensagem inbound por telefone normalizado: prioriza cobrança em aberto (maior valor) em clientes_cobranca_setembro, senão filiado ativo em adimplentes_base (rail relacionamento), retornando unit/matrícula/fila rabbitmq; se nada casar, descarta.",
+    "notes": "Não é trigger; função STABLE somente leitura. Chama norm_phone_br (custom rpc) três vezes para normalizar telefones. Lê units para obter rabbitmq_queue. Sem writes."
+  },
+  {
+    "funcao": "rpc_dispatches_hourly",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "units",
+        "columns": [
+          "id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "user_unit_permissions",
+        "columns": [
+          "unit_id",
+          "user_id",
+          "is_active"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "message_log",
+        "columns": [
+          "sent_at",
+          "unit_id"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [
+      "has_role()"
+    ],
+    "external": [],
+    "purpose": "Retorna a distribuicao horaria de disparos (media historica de 30 dias dias uteis vs hoje) por unidade permitida ao usuario, para o dashboard de relatorios.",
+    "notes": "Funcao SQL STABLE. auth.uid() builtin de auth nao listado como RPC. Filtro de permissao via has_role admin ou user_unit_permissions ativas."
+  },
+  {
+    "funcao": "rpc_failure_codes",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "units",
+        "columns": [
+          "id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "user_unit_permissions",
+        "columns": [
+          "unit_id",
+          "user_id",
+          "is_active"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "message_log",
+        "columns": [
+          "failure_code",
+          "failure_reason",
+          "status",
+          "sent_at",
+          "unit_id"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [
+      "has_role()"
+    ],
+    "external": [],
+    "purpose": "Agrega codigos e motivos de falha de envio dos ultimos 7 dias no message_log por unidade permitida, para diagnostico de entregabilidade.",
+    "notes": "Funcao SQL STABLE. Filtra status='failed'."
+  },
+  {
+    "funcao": "rpc_inbound_summary",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "units",
+        "columns": [
+          "id",
+          "bi_name"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "user_unit_permissions",
+        "columns": [
+          "unit_id",
+          "user_id",
+          "is_active"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "message_log",
+        "columns": [
+          "unit_id",
+          "status",
+          "sent_at"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "clientes_cobranca_dashboard",
+        "columns": [
+          "unit_id",
+          "data_ultima_mensagem_temp"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "message_inbound",
+        "columns": [
+          "unit_id",
+          "is_optout",
+          "received_at"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [
+      "has_role()"
+    ],
+    "external": [],
+    "purpose": "Resumo diario por unidade de entregas, interacoes (respostas de devedores) e opt-outs com percentual de resposta, para o dashboard de inbound.",
+    "notes": "Funcao SQL STABLE. Combina tres tabelas via FULL OUTER JOIN por unit_id."
+  },
+  {
+    "funcao": "rpc_message_cost",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "units",
+        "columns": [
+          "id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "user_unit_permissions",
+        "columns": [
+          "unit_id",
+          "user_id",
+          "is_active"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "message_log",
+        "columns": [
+          "pricing_category",
+          "pricing_billable",
+          "sent_at",
+          "unit_id"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [
+      "has_role()"
+    ],
+    "external": [],
+    "purpose": "Agrega volume total e cobravel de mensagens por categoria de precificacao nos ultimos 7 dias por unidade, para estimativa de custo Meta.",
+    "notes": "Funcao SQL STABLE."
+  },
+  {
+    "funcao": "rpc_phone_health_last_change",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "units",
+        "columns": [
+          "id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "user_unit_permissions",
+        "columns": [
+          "unit_id",
+          "user_id",
+          "is_active"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "phone_health",
+        "columns": [
+          "phone_number_id",
+          "observed_at",
+          "quality_rating",
+          "unit_id"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [
+      "has_role()"
+    ],
+    "external": [],
+    "purpose": "Detecta a ultima transicao de quality_rating (subida/descida) de cada numero de telefone por unidade, para monitorar a saude dos numeros WhatsApp.",
+    "notes": "Funcao SQL STABLE. Usa window function LAG e DISTINCT ON; mapeia GREEN/YELLOW/RED para score numerico."
+  },
+  {
+    "funcao": "sentinel_apply_meta_event",
+    "security_definer": true,
+    "search_path": null,
+    "reads": [
+      {
+        "table": "template_inventory",
+        "columns": [
+          "template_name",
+          "waba_id",
+          "category",
+          "id",
+          "parent_template_inventory_id",
+          "sentinel_generation",
+          "body_text",
+          "status",
+          "quality_score"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [
+      {
+        "table": "template_inventory",
+        "op": "insert",
+        "columns": [
+          "template_name",
+          "waba_id",
+          "last_checked_at"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "template_inventory",
+        "op": "update",
+        "columns": [
+          "status",
+          "quality_score",
+          "category",
+          "rejection_reason",
+          "last_checked_at",
+          "updated_at",
+          "meta_event_history",
+          "paused_by_sentinel",
+          "paused_at",
+          "paused_reason",
+          "is_active_in_cadence"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Aplica eventos de webhook da Meta (status/quality/category de template) ao template_inventory, decide criticidade e pausa o template na cadencia, com guardrail anti-loop por profundidade de chain.",
+    "notes": "SECURITY DEFINER SEM SET search_path (null). Referencia template_inventory sem qualificacao de schema (depende do search_path do caller). SELECT * INTO v_row (rowtype) le toda a linha - colunas confirmadas sao as citadas literalmente. Usa WITH RECURSIVE sobre template_inventory para contar geracoes (read). v_row.id usado no UPDATE WHERE. INSERT so quando template nao existe."
+  },
+  {
+    "funcao": "sentinel_register_variation",
+    "security_definer": true,
+    "search_path": null,
+    "reads": [
+      {
+        "table": "template_inventory",
+        "columns": [
+          "id",
+          "sentinel_generation"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [
+      {
+        "table": "template_inventory",
+        "op": "upsert",
+        "columns": [
+          "template_name",
+          "waba_id",
+          "unit_code",
+          "category",
+          "status",
+          "submitted_at",
+          "body_text",
+          "parent_template_inventory_id",
+          "sentinel_generation",
+          "meta_template_id",
+          "sentinel_variation_rationale",
+          "sentinel_variation_input",
+          "sentinel_variation_output",
+          "submitted_to_meta_at",
+          "is_active_in_cadence",
+          "updated_at"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Registra uma nova variacao de template gerada pelo Sentinel filha de um template pai, incrementando a geracao e gravando rationale/input/output da variacao no template_inventory.",
+    "notes": "SECURITY DEFINER SEM SET search_path (null); referencia template_inventory sem schema. SELECT * INTO v_parent (rowtype). INSERT ... ON CONFLICT (template_name, waba_id) DO UPDATE = upsert (uma op, nao dividir). EXCLUDED.* propaga colunas do INSERT."
+  },
+  {
+    "funcao": "set_user_tracking",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Trigger handler generico que preenche created_by/updated_by/updated_at com auth.uid() em INSERT/UPDATE de qualquer tabela que o use.",
+    "notes": "Trigger handler. Apenas muta campos de NEW (NEW.created_by, NEW.updated_by, NEW.updated_at) - mutacao de NEW nao e write a tabela. Tabela alvo nao inferivel (handler reutilizavel). auth.uid() builtin."
+  },
+  {
+    "funcao": "sync_cobranca_batch",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [],
+    "writes": [
+      {
+        "table": "clientes_cobranca_setembro",
+        "op": "upsert",
+        "columns": [
+          "matricula",
+          "name",
+          "whatsapp",
+          "valor_inadimplente",
+          "regua",
+          "status",
+          "forma de pagamento",
+          "unit_id",
+          "cadence_fase",
+          "cadence_dia_ciclo",
+          "cadence_branch_state",
+          "cadence_entrou_em",
+          "regua_at_entry",
+          "slots_enviados_hoje",
+          "updated_at"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "clientes_cobranca_setembro",
+        "op": "update",
+        "columns": [
+          "whatsapp",
+          "valor_inadimplente",
+          "regua",
+          "forma de pagamento",
+          "unit_id",
+          "updated_at"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "clientes_cobranca_setembro",
+        "op": "delete",
+        "columns": [
+          "matricula",
+          "pagamento_feito"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "clientes_cobranca_dashboard",
+        "op": "upsert",
+        "columns": [
+          "matricula",
+          "name",
+          "whatsapp",
+          "valor_inadimplente",
+          "regua",
+          "status",
+          "forma de pagamento",
+          "unit_id",
+          "bi_atual",
+          "cadence_fase",
+          "cadence_dia_ciclo",
+          "cadence_branch_state",
+          "cadence_entrou_em",
+          "regua_at_entry",
+          "slots_enviados_hoje",
+          "disparos_equipe",
+          "updated_at"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "clientes_cobranca_dashboard",
+        "op": "update",
+        "columns": [
+          "whatsapp",
+          "valor_inadimplente",
+          "regua",
+          "forma de pagamento",
+          "unit_id",
+          "bi_atual",
+          "updated_at"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Sincroniza um lote de inadimplentes (novos/atualizados/deletados/pagos) nas tabelas espelho clientes_cobranca_setembro e clientes_cobranca_dashboard, inicializando cadencia F0 para a regua NR.",
+    "notes": "Le os lotes de jsonb (p_new_records etc) via jsonb_array_elements - dados de parametro, nao tabela. Os dois INSERT ... ON CONFLICT (matricula) DO UPDATE sao upsert. Há tambem UPDATE diretos (atualizados), DELETE (deletados) e DELETE filtrando pagamento_feito (pagos), alem de UPDATE bi_atual=false no dashboard ao deletar. Coluna 'forma de pagamento' tem espacos (identificador citado). Suporta p_dry_run."
+  },
+  {
+    "funcao": "sync_cobranca_v2",
+    "security_definer": true,
+    "search_path": "public, pg_temp",
+    "reads": [
+      {
+        "table": "units",
+        "columns": [
+          "name",
+          "id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "spreadsheet_sync_log",
+        "columns": [
+          "status",
+          "file_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "clientes_cobranca_setembro",
+        "columns": [
+          "matricula",
+          "unit_id",
+          "pagamento_feito",
+          "whatsapp",
+          "regua",
+          "valor_inadimplente",
+          "forma de pagamento",
+          "name",
+          "status",
+          "created_at"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "clientes_cobranca_dashboard",
+        "columns": [
+          "unit_id",
+          "matricula"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "sync_snapshots",
+        "columns": [
+          "unit_id",
+          "snapshot_date",
+          "valor_total",
+          "total_clientes"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [
+      {
+        "table": "spreadsheet_sync_log",
+        "op": "delete",
+        "columns": [
+          "file_id"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "spreadsheet_sync_log",
+        "op": "insert",
+        "columns": [
+          "file_id",
+          "file_name",
+          "converted_file_id",
+          "status",
+          "records_in_sheet",
+          "validation_errors",
+          "header_row_detected",
+          "abort_rule",
+          "abort_reason",
+          "sanity_metrics",
+          "started_at",
+          "completed_at"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "spreadsheet_sync_log",
+        "op": "update",
+        "columns": [
+          "status",
+          "records_in_sheet",
+          "records_created",
+          "records_updated",
+          "records_deleted",
+          "records_paid_removed",
+          "records_skipped",
+          "completed_at"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "cobranca_sync_backup",
+        "op": "insert",
+        "columns": [
+          "sync_log_id",
+          "unit_id",
+          "snapshot_date",
+          "source_table",
+          "row_data"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "cobranca_sync_backup",
+        "op": "delete",
+        "columns": [
+          "created_at"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "clientes_cobranca_setembro",
+        "op": "insert",
+        "columns": [
+          "matricula",
+          "name",
+          "whatsapp",
+          "valor_inadimplente",
+          "regua",
+          "status",
+          "forma de pagamento",
+          "unit_id",
+          "cadence_fase",
+          "cadence_dia_ciclo",
+          "cadence_branch_state",
+          "cadence_entrou_em",
+          "regua_at_entry",
+          "slots_enviados_hoje"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "clientes_cobranca_setembro",
+        "op": "update",
+        "columns": [
+          "whatsapp",
+          "valor_inadimplente",
+          "regua",
+          "forma de pagamento",
+          "unit_id",
+          "updated_at"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "clientes_cobranca_setembro",
+        "op": "delete",
+        "columns": [
+          "unit_id",
+          "pagamento_feito",
+          "matricula"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "clientes_cobranca_dashboard",
+        "op": "upsert",
+        "columns": [
+          "matricula",
+          "name",
+          "whatsapp",
+          "valor_inadimplente",
+          "regua",
+          "status",
+          "forma de pagamento",
+          "unit_id",
+          "bi_atual",
+          "cadence_fase",
+          "cadence_dia_ciclo",
+          "cadence_branch_state",
+          "cadence_entrou_em",
+          "regua_at_entry",
+          "slots_enviados_hoje",
+          "disparos_equipe",
+          "updated_at"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "clientes_cobranca_dashboard",
+        "op": "update",
+        "columns": [
+          "whatsapp",
+          "valor_inadimplente",
+          "regua",
+          "forma de pagamento",
+          "unit_id",
+          "bi_atual",
+          "updated_at"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "cobranca_clientes_removidos",
+        "op": "insert",
+        "columns": [
+          "matricula",
+          "name",
+          "whatsapp",
+          "unit_id",
+          "regua_no_momento",
+          "status_no_momento",
+          "valor_no_momento",
+          "motivo",
+          "dias_na_base",
+          "entrou_em",
+          "removido_em",
+          "sync_log_id",
+          "snapshot_date"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "sync_snapshots",
+        "op": "upsert",
+        "columns": [
+          "unit_id",
+          "snapshot_date",
+          "sync_log_id",
+          "entradas",
+          "saidas",
+          "saidas_pagamento",
+          "saidas_sumiu",
+          "atualizados",
+          "total_clientes",
+          "valor_total",
+          "aging_medio_dias",
+          "regua_distribuicao",
+          "regua_transicao",
+          "valor_total_delta",
+          "total_clientes_delta"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Sincronizacao transacional v2 de planilha de inadimplentes: valida sanity (export parcial), faz foto pre-sync (backup reversivel), aplica insert/update/delete/upsert em setembro+dashboard, registra removidos e grava snapshot diario e log de sync.",
+    "notes": "search_path = 'public, pg_temp' (dois valores). Tambem tem SET statement_timeout='180s' (nao e search_path). Cria temp table _sheet via jsonb_to_recordset (fonte intermediaria em memoria, nao tabela persistente; matricula/name/whatsapp/valor_inadimplente/regua/forma_pagamento/status). pg_advisory_xact_lock e primitiva de lock, nao efeito externo. DELETE...RETURNING alimenta INSERT em cobranca_clientes_removidos (duas vezes: sumiu_da_planilha e pagamento_feito). to_jsonb(c.*)/to_jsonb(d.*) leem linha inteira para backup. SELECT * INTO v_prev de sync_snapshots (rowtype). Suporta p_dry_run e p_abort_rule. Coluna 'forma de pagamento' com espacos."
+  },
+  {
+    "funcao": "sync_data_ultimo_disparo_from_message_log",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "message_log",
+        "columns": [
+          "sent_at",
+          "matricula"
+        ],
+        "confidence": "inferido"
+      }
+    ],
+    "writes": [
+      {
+        "table": "clientes_cobranca_setembro",
+        "op": "update",
+        "columns": [
+          "data_ultimo_disparo"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "clientes_cobranca_dashboard",
+        "op": "update",
+        "columns": [
+          "data_ultimo_disparo"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Trigger handler que, ao registrar um disparo no message_log, propaga a data do ultimo disparo (em BRT, idempotente) para clientes_cobranca_setembro e clientes_cobranca_dashboard pela matricula.",
+    "notes": "Trigger handler. Tabela de origem inferida como message_log a partir de NEW.sent_at e NEW.matricula (read via NEW, nao FROM). Atualizacao condicionada a data_ultimo_disparo nula ou mais antiga (idempotente). UPDATE em ambas tabelas por matricula."
+  },
+  {
+    "funcao": "trg_log_event_changes",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [],
+    "writes": [
+      {
+        "table": "event_log",
+        "op": "insert",
+        "columns": [
+          "actor_type",
+          "actor_id",
+          "actor_name",
+          "actor_url",
+          "event_type",
+          "entity_type",
+          "entity_id",
+          "source_system",
+          "source_detail",
+          "before_data",
+          "after_data",
+          "unit_id"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Trigger handler de auditoria generico que insere em event_log o before/after (to_jsonb de OLD/NEW) e o actor (de GUCs de sessao app.*) para qualquer tabela auditada.",
+    "notes": "Trigger handler generico (usa TG_TABLE_NAME/TG_OP/TG_NAME); tabela alvo nao inferivel. current_setting('app.actor_id'|'app.actor_type'|'app.actor_name'|'app.actor_url'|'app.source_detail', true) sao GUCs de sessao, nao reads de tabela. to_jsonb(OLD)/to_jsonb(NEW) leem a linha mutante (nao uma tabela FROM). Unico write e INSERT em event_log."
+  },
+  {
+    "funcao": "trg_motor_v2_bloqueio_cliente",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "fila_humana",
+        "columns": [
+          "matricula",
+          "unit_id",
+          "resolved_at"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [
+      {
+        "table": "cliente_cadencia",
+        "op": "update",
+        "columns": [
+          "status",
+          "paused_at",
+          "paused_reason",
+          "updated_at"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "fila_humana",
+        "op": "insert",
+        "columns": [
+          "unit_id",
+          "matricula",
+          "telefone",
+          "nome",
+          "cliente_cadencia_id",
+          "motivo",
+          "motivo_detalhe"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "event_log",
+        "op": "insert",
+        "columns": [
+          "actor_type",
+          "actor_id",
+          "actor_name",
+          "event_type",
+          "entity_type",
+          "entity_id",
+          "source_system",
+          "source_detail",
+          "unit_id",
+          "cliente_id",
+          "metadata"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [
+      "motor_v2_cancel_future_disparos()"
+    ],
+    "external": [],
+    "purpose": "Trigger AFTER UPDATE que, ao detectar bloqueio de disparos de um cliente (bloqueio_disparos true ou disparos_pausados_ate futuro), cancela disparos programados, pausa a cadência, abre item na fila humana e registra o evento.",
+    "notes": "Trigger handler. Atua sobre a tabela do n8n 'clientes_cobranca_setembro' (inferido pelo source_detail 'clientes_cobranca_setembro AFTER UPDATE'); usa NEW.matricula, NEW.unit_id, NEW.whatsapp, NEW.name, NEW.bloqueio_disparos, NEW.disparos_pausados_ate da linha que dispara o trigger. O UPDATE em cliente_cadencia filtra por status IN ('ACTIVE','PAUSED_REGUA_MORTA') e usa RETURNING * INTO v_cliente_cadencia (lê id implicitamente)."
+  },
+  {
+    "funcao": "trg_motor_v2_recalc_gate_from_health",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [],
+    "writes": [
+      {
+        "table": "event_log",
+        "op": "insert",
+        "columns": [
+          "actor_type",
+          "actor_id",
+          "event_type",
+          "source_system",
+          "source_detail",
+          "unit_id",
+          "metadata"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [
+      "motor_v2_recalc_gate()"
+    ],
+    "external": [],
+    "purpose": "Trigger que, ao inserir/atualizar uma fonte de saúde (health) com unit_id, recalcula o gate da unidade chamando motor_v2_recalc_gate, registrando falha no event_log sem derrubar a operação de origem.",
+    "notes": "Trigger handler genérico (usa TG_TABLE_NAME/TG_NAME no source_detail); a tabela alvo não é determinável pelo corpo. Lê NEW.unit_id da linha que dispara. INSERT em event_log só ocorre no bloco EXCEPTION. Sem reads de tabela."
+  },
+  {
+    "funcao": "update_updated_at_column",
+    "security_definer": false,
+    "search_path": null,
+    "reads": [],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Trigger genérico que seta NEW.updated_at = NOW() em INSERT/UPDATE.",
+    "notes": "Trigger handler utilitário aplicável a qualquer tabela com coluna updated_at; não lê nem escreve em tabelas diretamente (só modifica o registro NEW). Sem SECURITY DEFINER e sem search_path."
+  },
+  {
+    "funcao": "upsert_payment_link",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [],
+    "writes": [
+      {
+        "table": "links_pagamentos_gerados",
+        "op": "upsert",
+        "columns": [
+          "correlation_id",
+          "matricula",
+          "whatsapp",
+          "link_pagamento",
+          "unit_id",
+          "plataforma_pagamento_utilizada",
+          "data_link_gerado",
+          "gateway_charge_id",
+          "updated_at"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Insere ou atualiza (ON CONFLICT em correlation_id) um link de pagamento gerado para um cliente, retornando o link em JSON.",
+    "notes": "UPSERT: INSERT com colunas correlation_id, matricula, whatsapp, link_pagamento, unit_id, plataforma_pagamento_utilizada, data_link_gerado, gateway_charge_id; no DO UPDATE escreve link_pagamento, gateway_charge_id e updated_at. Usa RETURNING link_pagamento INTO v_link."
+  },
+  {
+    "funcao": "user_can_read_unit",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "user_unit_permissions",
+        "columns": [
+          "user_id",
+          "unit_id",
+          "is_active"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [
+      "has_role()"
+    ],
+    "external": [],
+    "purpose": "Retorna true se o usuário autenticado é admin ou tem permissão ativa na unidade informada (RLS helper por unit_id).",
+    "notes": "Função SQL STABLE. Lê user_unit_permissions (alias uup) filtrando por user_id=auth.uid(), unit_id=_unit_id e COALESCE(is_active,true). Chama public.has_role(auth.uid(),'admin')."
+  },
+  {
+    "funcao": "user_can_read_unit_code",
+    "security_definer": true,
+    "search_path": "public",
+    "reads": [
+      {
+        "table": "user_unit_permissions",
+        "columns": [
+          "user_id",
+          "unit_id",
+          "is_active"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "units",
+        "columns": [
+          "id",
+          "code"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [
+      "has_role()"
+    ],
+    "external": [],
+    "purpose": "Retorna true se o usuário autenticado é admin ou tem permissão ativa na unidade identificada por seu código (RLS helper por unit_code).",
+    "notes": "Função SQL STABLE. JOIN entre user_unit_permissions (uup) e units (u) por u.id=uup.unit_id; filtra uup.user_id=auth.uid(), u.code=_unit_code, COALESCE(uup.is_active,true). Chama public.has_role(auth.uid(),'admin')."
+  },
+  {
+    "funcao": "user_has_access_to_unit",
+    "security_definer": true,
+    "search_path": null,
+    "reads": [
+      {
+        "table": "user_roles",
+        "columns": [
+          "user_id",
+          "role"
+        ],
+        "confidence": "confirmado"
+      },
+      {
+        "table": "user_unit_permissions",
+        "columns": [
+          "user_id",
+          "unit_id",
+          "is_active"
+        ],
+        "confidence": "confirmado"
+      }
+    ],
+    "writes": [],
+    "calls_rpcs": [],
+    "external": [],
+    "purpose": "Retorna true se o usuário autenticado é admin (via user_roles) ou possui permissão ativa na unidade específica (RLS helper).",
+    "notes": "plpgsql STABLE SECURITY DEFINER, SEM SET search_path (null). Lê user_roles filtrando user_id=auth.uid() e role='admin'; lê user_unit_permissions filtrando user_id, unit_id=unit_id_param e is_active=TRUE. Não chama has_role (verifica role direto na tabela), diferente das duas funções anteriores."
+  }
+]

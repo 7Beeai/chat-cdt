@@ -23,9 +23,9 @@ import {
   type ConversationRow,
   type HandoffReason,
   type InboxTab,
+  type UnitVitals,
 } from '@/app/(app)/inbox/list-data'
 import { extractPreview } from '@/app/(app)/inbox/preview'
-import { waitMinutes } from '@/app/(app)/inbox/sla'
 import type { CloseOutcome } from '@/app/(app)/inbox/outcomes'
 import { createClient } from '@/lib/supabase/client'
 import { cn } from '@/lib/utils'
@@ -61,11 +61,13 @@ export function InboxWorkspace({
   initial,
   currentUserId,
   operatorNames = {},
+  vitalsByUnit = [],
   children,
 }: {
   initial: ConversationListItem[]
   currentUserId: string
   operatorNames?: Record<string, string>
+  vitalsByUnit?: UnitVitals[]
   children: React.ReactNode
 }) {
   const [items, setItems] = useState<ConversationListItem[]>(initial)
@@ -229,22 +231,24 @@ export function InboxWorkspace({
     return c
   }, [unitScoped, currentUserId])
 
+  // True queue vitals come from the server (chat_inbox_vitals), NOT the capped
+  // working set — otherwise the counter pins at the .limit(300) ceiling and
+  // disagrees with Relatórios. Re-aggregate per the selected unit (or all).
+  // Snapshot as of page load; it does not tick live (the backlog barely moves
+  // second-to-second and a correct snapshot beats a live-but-wrong number).
   const vitals = useMemo(() => {
-    let waiting = 0
-    let breached = 0
-    let active = 0
-    for (const it of unitScoped) {
-      if (it.status !== 'open') continue
-      if (it.assigned_operator_id == null && it.routing !== 'ai') {
-        waiting++
-        const w = waitMinutes(it.last_inbound_at)
-        if (w != null && w >= 20) breached++
-      } else if (it.assigned_operator_id != null) {
-        active++
-      }
-    }
-    return { waiting, breached, active }
-  }, [unitScoped])
+    const scope = selectedUnitId
+      ? vitalsByUnit.filter((v) => v.unit_id === selectedUnitId)
+      : vitalsByUnit
+    return scope.reduce(
+      (acc, v) => ({
+        waiting: acc.waiting + v.waiting,
+        breached: acc.breached + v.breached,
+        active: acc.active + v.active,
+      }),
+      { waiting: 0, breached: 0, active: 0 },
+    )
+  }, [vitalsByUnit, selectedUnitId])
 
   // Operators present in the current unit scope (for the operator filter).
   const operators = useMemo(() => {
@@ -339,7 +343,10 @@ export function InboxWorkspace({
     <div className="flex min-h-0 flex-1">
       <InboxListColumn
         rows={rows}
-        counts={counts}
+        // "Aguardando" tab badge shares the waiting vital's definition, so use
+        // the real (uncapped) count for it too; mine/team/closed stay
+        // client-derived (accurate at current volumes).
+        counts={{ ...counts, waiting: vitals.waiting }}
         vitals={vitals}
         tab={tab}
         onTab={setTab}
