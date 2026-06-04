@@ -17,6 +17,7 @@ import Link from 'next/link'
 import type { CSSProperties, MouseEvent } from 'react'
 
 import { formatWaId } from '@/lib/format/phone'
+import { nameInitials } from '@/lib/format/name'
 import { relativeTime, windowRemaining } from '@/lib/format/time'
 import { unitColor } from '@/lib/unit-colors'
 import { cn } from '@/lib/utils'
@@ -48,12 +49,8 @@ const PREVIEW_ICON: Partial<Record<PreviewKind, LucideIcon>> = {
 }
 
 function initialsOf(name: string | null | undefined, fallback: string): string {
-  const source = (name ?? '').trim()
-  if (source) {
-    const parts = source.split(/\s+/).filter(Boolean)
-    if (parts.length === 1) return parts[0].charAt(0).toUpperCase()
-    return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase()
-  }
+  const ini = nameInitials(name)
+  if (ini) return ini
   const digits = fallback.replace(/\D/g, '')
   return digits.length >= 2 ? digits.slice(-2) : '#'
 }
@@ -61,16 +58,18 @@ function initialsOf(name: string | null | undefined, fallback: string): string {
 function windowState(
   expiresAt: string | null,
   expired: boolean,
+  now: number,
 ): { show: boolean; urgent: boolean } {
   if (expired) return { show: true, urgent: true }
   if (!expiresAt) return { show: false, urgent: false }
-  const diffMs = new Date(expiresAt).getTime() - Date.now()
+  const diffMs = new Date(expiresAt).getTime() - now
   if (Number.isNaN(diffMs)) return { show: false, urgent: false }
   return { show: diffMs < 2 * 60 * 60 * 1000, urgent: diffMs < 30 * 60 * 1000 }
 }
 
 export function InboxRow({
   conv,
+  now,
   isActive = false,
   selected = false,
   onToggleSelect,
@@ -78,6 +77,14 @@ export function InboxRow({
   operatorNames = {},
 }: {
   conv: ConversationListItem
+  /**
+   * Single "now" snapshot shared by every row (seeded from the server, then
+   * advanced client-side by the workspace ticker). Time-relative labels MUST
+   * derive from this — calling Date.now() per row makes the server and client
+   * first render disagree on the minute → hydration mismatch → React throws the
+   * whole list away and re-renders it (see the 36s render times).
+   */
+  now: number
   isActive?: boolean
   selected?: boolean
   onToggleSelect?: (id: string) => void
@@ -107,10 +114,10 @@ export function InboxRow({
 
   const handoff = conv.handoff_reason ? HANDOFF[conv.handoff_reason] : null
 
-  const wait = waitMinutes(conv.last_inbound_at)
+  const wait = waitMinutes(conv.last_inbound_at, now)
   const tone = isQueued ? slaTone(wait) : null
-  const win = windowRemaining(conv.customer_window_expires_at)
-  const winState = windowState(conv.customer_window_expires_at, win.expired)
+  const win = windowRemaining(conv.customer_window_expires_at, now)
+  const winState = windowState(conv.customer_window_expires_at, win.expired, now)
 
   // Left accent sliver: lime when active or queued-needing-attention.
   const leftBar = isActive || (isQueued && !handoff) ? 'hsl(83 79% 60%)' : null
@@ -205,7 +212,7 @@ export function InboxRow({
             </span>
           ) : (
             <span className="shrink-0 font-mono-num text-[10px] text-muted-foreground">
-              {relativeTime(conv.last_inbound_at ?? conv.preview?.createdAt ?? null)}
+              {relativeTime(conv.last_inbound_at ?? conv.preview?.createdAt ?? null, now)}
             </span>
           )}
         </div>

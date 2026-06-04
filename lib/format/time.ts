@@ -2,12 +2,11 @@
  * Relative time helper in Brazilian Portuguese.
  * Avoids external date libs — uses plain math.
  */
-export function relativeTime(ts: string | null): string {
+export function relativeTime(ts: string | null, now: number = Date.now()): string {
   if (!ts) return ''
   const then = new Date(ts).getTime()
   if (Number.isNaN(then)) return ''
 
-  const now = Date.now()
   const diffSec = Math.floor((now - then) / 1000)
 
   if (diffSec < 45) return 'agora'
@@ -39,7 +38,10 @@ export function relativeTime(ts: string | null): string {
  * Remaining time formatter for the Meta 24h window.
  * Returns { expired: boolean, label: string }.
  */
-export function windowRemaining(expiresAt: string | null): {
+export function windowRemaining(
+  expiresAt: string | null,
+  now: number = Date.now(),
+): {
   expired: boolean
   label: string
 } {
@@ -47,7 +49,7 @@ export function windowRemaining(expiresAt: string | null): {
   const target = new Date(expiresAt).getTime()
   if (Number.isNaN(target)) return { expired: true, label: 'sem janela' }
 
-  const diffSec = Math.floor((target - Date.now()) / 1000)
+  const diffSec = Math.floor((target - now) / 1000)
   if (diffSec <= 0) return { expired: true, label: 'fora da janela' }
 
   const diffMin = Math.floor(diffSec / 60)

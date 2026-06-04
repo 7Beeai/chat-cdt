@@ -140,3 +140,5 @@ Pode responder simples, tipo *"concordo com tudo"* ou *"no item 3, separadas"*. 
 ---
 
 > **Resumindo de tudo:** uma ficha por pessoa, etiquetas claras na capa, um caderninho com tudo que acontece, e gavetas separadas pra interessados, dinheiro e WhatsApp. A situação do cliente passa a ser **uma coisa que você lê**, não **um lugar onde a pasta está escondida**. É isso que vai te dar controle e acabar com a cobrança de quem já pagou.
+
+

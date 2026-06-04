@@ -30,6 +30,8 @@ import type { CloseOutcome } from '@/app/(app)/inbox/outcomes'
 import { createClient } from '@/lib/supabase/client'
 import { cn } from '@/lib/utils'
 
+import { HexagonPattern } from '@/components/ui/hexagon-pattern'
+
 import { CloseDialog } from './close-dialog'
 import { InboxListColumn } from './inbox-list-column'
 import { useUnitFilter } from './unit-filter'
@@ -62,12 +64,16 @@ export function InboxWorkspace({
   currentUserId,
   operatorNames = {},
   vitalsByUnit = [],
+  serverNow,
   children,
 }: {
   initial: ConversationListItem[]
   currentUserId: string
   operatorNames?: Record<string, string>
   vitalsByUnit?: UnitVitals[]
+  /** Date.now() captured on the server, so the first client render agrees with
+   * the SSR HTML on time-relative labels (avoids the hydration mismatch). */
+  serverNow: number
   children: React.ReactNode
 }) {
   const [items, setItems] = useState<ConversationListItem[]>(initial)
@@ -79,7 +85,7 @@ export function InboxWorkspace({
   const [operatorFilter, setOperatorFilter] = useState<string | 'all'>('all')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkCloseOpen, setBulkCloseOpen] = useState(false)
-  const [, setNow] = useState(0)
+  const [now, setNow] = useState(serverNow)
   const [isBulkPending, startTransition] = useTransition()
 
   const router = useRouter()
@@ -91,10 +97,13 @@ export function InboxWorkspace({
     setItems(initial)
   }, [initial])
 
-  // Low-frequency ticker so SLA tones + the "estourado" vital advance over time
-  // (they're derived from Date.now()). 30s matches the thread header cadence.
+  // Low-frequency ticker so SLA tones + relative times advance. We START from
+  // the server's `now` (so the first client render matches the SSR HTML), then
+  // jump to the real client clock AFTER mount — past hydration, so no mismatch.
+  // 30s matches the thread header cadence.
   useEffect(() => {
-    const t = setInterval(() => setNow((n) => n + 1), 30_000)
+    setNow(Date.now())
+    const t = setInterval(() => setNow(Date.now()), 30_000)
     return () => clearInterval(t)
   }, [])
 
@@ -343,6 +352,7 @@ export function InboxWorkspace({
     <div className="flex min-h-0 flex-1">
       <InboxListColumn
         rows={rows}
+        now={now}
         // "Aguardando" tab badge shares the waiting vital's definition, so use
         // the real (uncapped) count for it too; mine/team/closed stay
         // client-derived (accurate at current volumes).
@@ -374,7 +384,22 @@ export function InboxWorkspace({
           activeId ? 'flex' : 'hidden lg:flex',
         )}
       >
-        {children}
+        {/* Hexagon grid backdrop for the thread canvas — same motif as /login
+            but fainter (/0.07 vs /0.12) so it textures the empty state and the
+            chat background without competing with messages. Absolute layer sits
+            behind {children}, which is lifted with z-[1]. */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 z-0 overflow-hidden [mask-image:radial-gradient(ellipse_80%_70%_at_50%_40%,black,transparent_85%)]"
+        >
+          <HexagonPattern
+            radius={36}
+            className="stroke-[hsl(83_79%_60%/0.04)] fill-none"
+          />
+        </div>
+        <div className="relative z-[1] flex min-h-0 min-w-0 flex-1">
+          {children}
+        </div>
       </section>
 
       <CloseDialog

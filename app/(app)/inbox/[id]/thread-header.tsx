@@ -24,6 +24,7 @@ import {
 } from '@/components/ui/sheet'
 import { cn } from '@/lib/utils'
 import { formatWaId } from '@/lib/format/phone'
+import { nameInitials } from '@/lib/format/name'
 import { unitColor } from '@/lib/unit-colors'
 import { waitMinutes } from '@/app/(app)/inbox/sla'
 import type { CloseOutcome } from '@/app/(app)/inbox/outcomes'
@@ -328,11 +329,5 @@ function winLabelOf(remainingMs: number, expired: boolean): string {
 }
 
 function getInitials(name: string): string {
-  const parts = name
-    .trim()
-    .split(/\s+/)
-    .filter((p) => p.length > 0)
-  if (parts.length === 0) return '??'
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+  return nameInitials(name) || '??'
 }

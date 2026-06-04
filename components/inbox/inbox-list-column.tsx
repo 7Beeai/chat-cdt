@@ -19,6 +19,7 @@ import { QueueVitals } from './queue-vitals'
 
 export function InboxListColumn({
   rows,
+  now,
   counts,
   vitals,
   tab,
@@ -40,6 +41,8 @@ export function InboxListColumn({
   onBulkClose,
 }: {
   rows: ConversationListItem[]
+  /** Shared "now" snapshot, threaded into each row (see InboxRow). */
+  now: number
   counts: Record<InboxTab, number>
   vitals: { waiting: number; breached: number; active: number }
   tab: InboxTab
@@ -159,6 +162,7 @@ export function InboxListColumn({
               <li key={c.id}>
                 <InboxRow
                   conv={c}
+                  now={now}
                   isActive={c.id === activeId}
                   selected={selectedIds.has(c.id)}
                   onToggleSelect={onToggleSelect}

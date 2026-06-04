@@ -159,6 +159,7 @@ export default async function InboxLayout({
       currentUserId={user.id}
       operatorNames={operatorNames}
       vitalsByUnit={vitalsByUnit}
+      serverNow={Date.now()}
     >
       {children}
     </InboxWorkspace>

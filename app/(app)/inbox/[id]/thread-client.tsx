@@ -476,11 +476,11 @@ function Bubble({
   //   cliente → neutro · IA → lime · operador → ciano
   // Cada tom aparece na bolha E na badge correspondente.
   const bgClass = (() => {
-    if (isIn) return 'bg-white/[0.05] text-foreground border border-border/60'
+    if (isIn) return 'bg-white/20 text-foreground border border-border/60'
     if (tone === 'out-operator')
-      return 'bg-sky-400/10 text-foreground border border-sky-400/25'
+      return 'bg-sky-400/20 text-foreground border border-sky-400/25'
     // out-ai e out-system
-    return 'bg-accent/10 text-foreground border border-accent/20'
+    return 'bg-accent/20 text-foreground border border-accent/20'
   })()
 
   const bubbleClass = cn(
