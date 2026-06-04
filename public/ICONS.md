@@ -7,23 +7,18 @@ The PWA manifest (`manifest.webmanifest`) and the service worker (`sw.js`) refer
 - `icon-maskable.png` — 512×512 PNG with safe area for Android maskable (padded content).
 - `badge.png` — small monochrome PNG (~96×96) used as Android notification badge.
 
-These files are **not yet committed**. `icon.svg` in this folder is the source-of-truth glyph (a chat-bubble with three dots).
+Estes ícones são gerados a partir de `bee.gif` (logo 7bee/CDT) pelo script
+`scripts/gen-icons.mjs`. O `apple-touch-icon.png` (180×180) é usado pelo iOS.
 
-## Generating the PNGs
-
-One-shot option (no install — uses Chrome under the hood):
+## Regenerando os PNGs
 
 ```bash
-pnpx pwa-asset-generator public/icon.svg public/ \
-  --background "#ffffff" \
-  --icon-only \
-  --favicon \
-  --maskable false
+pnpm add -D sharp   # se ainda não tiver
+node scripts/gen-icons.mjs
 ```
 
-Then run again with `--maskable true --padding "20%"` to produce the maskable variant, and rename outputs to match the names above.
-
-Alternatively use any vector-to-raster tool (Figma export, ImageMagick, Inkscape, `sharp`).
+Para trocar a imagem-fonte ou a cor de fundo, edite `SRC`/`BG` no topo do script.
+`icon.svg` (balão de chat) continua disponível como glyph alternativo.
 
 ## What happens without them
 

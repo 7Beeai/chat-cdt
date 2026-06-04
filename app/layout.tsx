@@ -17,6 +17,19 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "CHAT-CDT",
   description: "Atendimento humano WhatsApp — CDT",
+  manifest: "/manifest.webmanifest",
+  icons: {
+    icon: [
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
+  },
+  appleWebApp: {
+    capable: true,
+    title: "CHAT-CDT",
+    statusBarStyle: "black-translucent",
+  },
 };
 
 export const viewport = {
@@ -33,9 +46,6 @@ export default function RootLayout({
       lang="pt-BR"
       className={`dark ${outfit.variable} ${jetbrainsMono.variable} h-full antialiased`}
     >
-      <head>
-        <link rel="manifest" href="/manifest.webmanifest" />
-      </head>
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
   );
