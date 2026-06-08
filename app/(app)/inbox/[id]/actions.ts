@@ -111,6 +111,7 @@ export async function closeConversation(
   outcome: CloseOutcome,
   note?: string,
   paymentMethod?: string,
+  cardReregistered?: boolean,
 ): Promise<ActionResult> {
   const supabase = await createClient()
   const {
@@ -123,6 +124,8 @@ export async function closeConversation(
   // NEW.* and writes the 'closed' event with the outcome baked in. The payment
   // method only sticks for resolved closes (the dialog only asks for it on a
   // payment_re_register + resolvido close); otherwise it's nulled.
+  // close_card_reregistered is the mandatory "cartão recadastrado?" toggle,
+  // only sent for payment_re_register closes (undefined → null otherwise).
   const { error } = await supabase
     .from('conversations')
     .update({
@@ -133,6 +136,7 @@ export async function closeConversation(
       close_note: note?.trim() || null,
       close_payment_method:
         outcome === 'resolvido' ? paymentMethod?.trim() || null : null,
+      close_card_reregistered: cardReregistered ?? null,
     })
     .eq('id', conversationId)
 
