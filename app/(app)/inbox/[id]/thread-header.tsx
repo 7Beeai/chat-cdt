@@ -215,7 +215,7 @@ export function ThreadHeader({ conv, contextOpen, onToggleContext }: Props) {
             onClick={() => run('Devolvida para IA', () => returnToAI(conv.id))}
           >
             <Bot />
-            Devolver
+            Devolver para IA
           </Button>
         )}
         <Button
