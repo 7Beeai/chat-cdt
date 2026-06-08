@@ -54,15 +54,15 @@ export function CloseDialog({
   const [paymentMethod, setPaymentMethod] = useState<string | null>(null)
   const [cardReregistered, setCardReregistered] = useState<boolean | null>(null)
 
-  // "Recadastro de pagamento" gets a card-specific close flow: a mandatory
-  // "cartão recadastrado?" toggle on top, orthogonal to the outcome radios.
+  // "Recadastro de pagamento" gets a card-specific close flow, revealed in
+  // cascade and only when the close is "resolvido":
+  //   Resolvido → toggle "cartão recadastrado?" → (se Sim) forma de pagamento.
   const isCartao = handoffReason === 'payment_re_register'
-  const cardMissing = isCartao && cardReregistered === null
+  const needsCardToggle = isCartao && outcome === 'resolvido'
+  const cardMissing = needsCardToggle && cardReregistered === null
 
-  // Only on a re-registration handoff resolved successfully do we need to know
-  // which payment method the customer registered. Required when shown.
-  const needsPaymentMethod =
-    handoffReason === 'payment_re_register' && outcome === 'resolvido'
+  // Payment method only matters once the card was actually re-registered.
+  const needsPaymentMethod = needsCardToggle && cardReregistered === true
   const paymentMissing = needsPaymentMethod && !paymentMethod
 
   function reset() {
@@ -91,39 +91,6 @@ export function CloseDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {isCartao && (
-          <div className="rounded-[10px] border border-accent/30 bg-accent/[0.06] p-3">
-            <span className="mb-2 block text-[13px] font-semibold text-foreground">
-              Cartão recadastrado com sucesso?{' '}
-              <span className="text-accent">*</span>
-            </span>
-            <div className="flex gap-1.5">
-              {[
-                { v: true, label: 'Sim' },
-                { v: false, label: 'Não' },
-              ].map((opt) => {
-                const active = cardReregistered === opt.v
-                return (
-                  <button
-                    key={opt.label}
-                    type="button"
-                    onClick={() => setCardReregistered(opt.v)}
-                    aria-pressed={active}
-                    className={cn(
-                      'flex-1 rounded-lg border px-3 py-2 text-[13px] font-semibold transition-colors',
-                      active
-                        ? 'border-accent bg-accent text-accent-foreground'
-                        : 'border-border bg-card hover:border-accent/40 hover:bg-secondary',
-                    )}
-                  >
-                    {opt.label}
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-        )}
-
         <div className="flex flex-col gap-1.5">
           {CLOSE_OUTCOMES.map((o) => {
             const active = outcome === o.value
@@ -131,7 +98,14 @@ export function CloseDialog({
               <button
                 key={o.value}
                 type="button"
-                onClick={() => setOutcome(o.value)}
+                onClick={() => {
+                  setOutcome(o.value)
+                  // Leaving "resolvido" hides the cascade — clear its answers.
+                  if (o.value !== 'resolvido') {
+                    setCardReregistered(null)
+                    setPaymentMethod(null)
+                  }
+                }}
                 aria-pressed={active}
                 className={cn(
                   'flex items-center gap-2.5 rounded-[10px] border px-3 py-2.5 text-left transition-colors',
@@ -160,6 +134,42 @@ export function CloseDialog({
             )
           })}
         </div>
+
+        {needsCardToggle && (
+          <div className="rounded-[10px] border border-accent/30 bg-accent/[0.06] p-3">
+            <span className="mb-2 block text-[13px] font-semibold text-foreground">
+              Cartão recadastrado com sucesso?{' '}
+              <span className="text-accent">*</span>
+            </span>
+            <div className="flex gap-1.5">
+              {[
+                { v: true, label: 'Sim' },
+                { v: false, label: 'Não' },
+              ].map((opt) => {
+                const active = cardReregistered === opt.v
+                return (
+                  <button
+                    key={opt.label}
+                    type="button"
+                    onClick={() => {
+                      setCardReregistered(opt.v)
+                      if (!opt.v) setPaymentMethod(null)
+                    }}
+                    aria-pressed={active}
+                    className={cn(
+                      'flex-1 rounded-lg border px-3 py-2 text-[13px] font-semibold transition-colors',
+                      active
+                        ? 'border-accent bg-accent text-accent-foreground'
+                        : 'border-border bg-card hover:border-accent/40 hover:bg-secondary',
+                    )}
+                  >
+                    {opt.label}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
 
         {needsPaymentMethod && (
           <div className="rounded-[10px] border border-accent/30 bg-accent/[0.06] p-2.5">
@@ -219,8 +229,8 @@ export function CloseDialog({
               onConfirm(
                 outcome,
                 note,
-                paymentMethod ?? undefined,
-                isCartao ? (cardReregistered ?? undefined) : undefined,
+                needsPaymentMethod ? (paymentMethod ?? undefined) : undefined,
+                needsCardToggle ? (cardReregistered ?? undefined) : undefined,
               )
             }
             disabled={pending || !outcome || paymentMissing || cardMissing}
