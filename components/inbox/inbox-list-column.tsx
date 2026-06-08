@@ -65,10 +65,13 @@ export function InboxListColumn({
 }) {
   const reasonOptions = [
     { value: 'all', label: 'Todos os motivos' },
-    ...(Object.keys(HANDOFF_LABEL) as HandoffReason[]).map((r) => ({
-      value: r,
-      label: HANDOFF_LABEL[r],
-    })),
+    ...(Object.keys(HANDOFF_LABEL) as HandoffReason[])
+      // Cancelamento foi removido do sistema — não é mais um motivo de handoff.
+      .filter((r) => r !== 'cancel')
+      .map((r) => ({
+        value: r,
+        label: HANDOFF_LABEL[r],
+      })),
   ]
   const operatorOptions = [
     { value: 'all', label: 'Todos os operadores' },

@@ -36,6 +36,12 @@ export default async function InboxLayout({
     unit:units(id, code, name)
   `
 
+  // Cancelamento foi removido do sistema (2026-06-08): não é mais motivo de
+  // handoff, então nenhuma conversa de cancelamento aparece na inbox.
+  // Encerrados antigos ficam ocultos: operadores só veem encerramentos a partir
+  // deste corte. O histórico continua no banco — é apenas filtro de exibição.
+  const HIDE_CLOSED_BEFORE = '2026-06-08T15:55:38Z'
+
   // v1 mostra SÓ handoffs. Conversas que a IA está tocando (routing='ai') não
   // entram. Abertas em fila/atendimento humano:
   const { data: openRows, error: openErr } = await supabase
@@ -44,17 +50,21 @@ export default async function InboxLayout({
     .eq('status', 'open')
     .in('routing', ['queued', 'human'])
     .not('handoff_reason', 'is', null)
+    .neq('handoff_reason', 'cancel')
     .order('priority', { ascending: false })
     .order('last_inbound_at', { ascending: false, nullsFirst: false })
     .limit(300)
   if (openErr) console.error('[inbox] open handoffs fetch failed', openErr)
 
   // Encerrados: só handoffs encerrados (com motivo) — exclui auto-fechados da IA.
+  // Corte por data esconde o backlog antigo; cancelamento nunca aparece.
   const { data: closedRows, error: closedErr } = await supabase
     .from('conversations')
     .select(selectCols)
     .eq('status', 'closed')
     .not('handoff_reason', 'is', null)
+    .neq('handoff_reason', 'cancel')
+    .gte('closed_at', HIDE_CLOSED_BEFORE)
     .order('last_inbound_at', { ascending: false, nullsFirst: false })
     .limit(200)
   if (closedErr) console.error('[inbox] closed handoffs fetch failed', closedErr)
