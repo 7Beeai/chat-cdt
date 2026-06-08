@@ -29,6 +29,14 @@ const ROUTING_LABEL: Record<string, string> = {
   human: 'Em atendimento',
 }
 
+/**
+ * Painel enxuto (temporário). Enquanto os dados de enriquecimento do cliente
+ * — pagamento, valor em aberto, link, tentativas, histórico de pagamentos e
+ * metadados da conversa — não são alimentados de forma confiável, o painel
+ * mostra só identidade + Matrícula/Régua. Para reativar tudo, trocar para true.
+ */
+const SHOW_FULL_CONTEXT: boolean = false
+
 export function ContextPanel({
   conversation,
   debtor,
@@ -126,36 +134,40 @@ export function ContextPanel({
       )}
 
       {/* This conversation */}
-      <Section label="Conversa">
-        <Fact
-          label="Motivo do handoff"
-          value={
-            conversation.handoff_reason
-              ? (HANDOFF_LABEL[conversation.handoff_reason] ??
-                conversation.handoff_reason)
-              : '—'
-          }
-        />
-        <Fact
-          label="Roteamento"
-          value={ROUTING_LABEL[conversation.routing] ?? conversation.routing}
-        />
-        <Fact
-          label="Janela 24h"
-          value={win.expired ? 'Fora da janela' : win.label}
-          tone={win.expired ? 'danger' : undefined}
-        />
-      </Section>
+      {SHOW_FULL_CONTEXT && (
+        <Section label="Conversa">
+          <Fact
+            label="Motivo do handoff"
+            value={
+              conversation.handoff_reason
+                ? (HANDOFF_LABEL[conversation.handoff_reason] ??
+                  conversation.handoff_reason)
+                : '—'
+            }
+          />
+          <Fact
+            label="Roteamento"
+            value={ROUTING_LABEL[conversation.routing] ?? conversation.routing}
+          />
+          <Fact
+            label="Janela 24h"
+            value={win.expired ? 'Fora da janela' : win.label}
+            tone={win.expired ? 'danger' : undefined}
+          />
+        </Section>
+      )}
 
       {/* Internal note placeholder — feature pending a notes table */}
-      <div className="mt-auto px-5 py-4">
-        <p className="font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground/70">
-          Nota interna
-        </p>
-        <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground/60">
-          Anotações da equipe chegam numa próxima versão.
-        </p>
-      </div>
+      {SHOW_FULL_CONTEXT && (
+        <div className="mt-auto px-5 py-4">
+          <p className="font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground/70">
+            Nota interna
+          </p>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground/60">
+            Anotações da equipe chegam numa próxima versão.
+          </p>
+        </div>
+      )}
     </aside>
   )
 }
@@ -207,6 +219,7 @@ function DebtSection({ debtor }: { debtor: DebtorContext }) {
   return (
     <>
       {/* Headline */}
+      {SHOW_FULL_CONTEXT && (
       <div className="border-b border-border px-5 pb-4 text-center">
         {debtor.ambiguous && (
           <div className="mb-3 flex items-start gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-left">
@@ -242,28 +255,33 @@ function DebtSection({ debtor }: { debtor: DebtorContext }) {
           </p>
         )}
       </div>
+      )}
 
       {/* Cadastro */}
       <Section label="Cadastro de cobrança">
         {debtor.matricula && (
           <Fact label="Matrícula" value={debtor.matricula} mono />
         )}
-        {debtor.status && !paid && <Fact label="Status" value={cap(debtor.status)} />}
+        {SHOW_FULL_CONTEXT && debtor.status && !paid && (
+          <Fact label="Status" value={cap(debtor.status)} />
+        )}
         {debtor.regua && <Fact label="Régua" value={debtor.regua} />}
-        <Fact
-          label="Tentativas de contato"
-          value={String(Math.round(debtor.tentativas ?? 0))}
-          mono
-        />
+        {SHOW_FULL_CONTEXT && (
+          <Fact
+            label="Tentativas de contato"
+            value={String(Math.round(debtor.tentativas ?? 0))}
+            mono
+          />
+        )}
       </Section>
 
       {/* Link de pagamento */}
-      {debtor.ultimo_link && (
+      {SHOW_FULL_CONTEXT && debtor.ultimo_link && (
         <PaymentLinkSection link={debtor.ultimo_link} />
       )}
 
       {/* Pagamentos */}
-      {(debtor.qtd_pagamentos ?? 0) > 0 && (
+      {SHOW_FULL_CONTEXT && (debtor.qtd_pagamentos ?? 0) > 0 && (
         <Section label="Pagamentos">
           {debtor.ultimo_pagamento && (
             <Fact
