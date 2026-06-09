@@ -91,9 +91,11 @@ export async function createUserAction(formData: FormData): Promise<ActionResult
     }
   }
 
-  if (name) {
-    await supabase.from('profiles').update({ name }).eq('id', profileId)
-  }
+  // Senha criada pelo admin é temporária → força a troca no 1º login.
+  await supabase
+    .from('profiles')
+    .update({ ...(name ? { name } : {}), must_reset_password: true })
+    .eq('id', profileId)
   const unitErr = await applyUnits(supabase, profileId, unitIds)
 
   revalidatePath('/admin/users')

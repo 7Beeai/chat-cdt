@@ -23,9 +23,15 @@ export default async function AppLayout({
   // Resolve operator profile via auth.uid() -> profiles.user_id chain.
   const { data: profile } = await supabase
     .from('profiles')
-    .select('id, name')
+    .select('id, name, must_reset_password')
     .eq('user_id', user.id)
     .maybeSingle()
+
+  // 1º login com senha temporária: força a troca antes de usar o sistema.
+  // /reset-password fica FORA deste grupo (app), então não há loop.
+  if (profile?.must_reset_password) {
+    redirect('/reset-password')
+  }
 
   const sidebarUser = profile
     ? {
