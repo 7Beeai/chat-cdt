@@ -1,8 +1,10 @@
 # 8. Status
 
-> **Atualizar ao fim de cada sessão de trabalho.** Última atualização: 2026-05-29 (sessão 3).
+> **Atualizar ao fim de cada sessão de trabalho.** Última atualização: 2026-06-09 (sessão 4).
 >
-> **Sessão 2026-05-29** entregou: tela de admin de usuários (`/admin/users`), ciclo de atendimento (assumir/encerrar com desfecho + log de eventos, migrations 0009-0011), inbox multi-operador (abas por estado/dono + exclusividade híbrida) e dashboard de Relatórios (`/reports`, migration 0012). **Detalhes, convenções não-óbvias e pendências em [`10-sessao-2026-05-29.md`](10-sessao-2026-05-29.md).** Builds verdes; validação visual em browser ainda pendente; nada commitado.
+> **Sessão 2026-06-08/09 (GO-LIVE)** entregou: app migrado pro fork **`7Beeai/chat-cdt`** com **auto-deploy** no push (GitHub Actions → VPS); **cancelamento nunca vira handoff** nos dois trilhos da IA (relacionamento blindado contra reclassificação, validado por roleplay); painel de contexto enxuto (`SHOW_FULL_CONTEXT`); **encerramento de cartão** com toggle "Cartão recadastrado?" (migration 0017); cancelamento e encerrados antigos ocultos da inbox (corte `HIDE_CLOSED_BEFORE`); 4 acessos novos de atendente; e **troca de senha obrigatória no 1º login** (`/reset-password`, migration 0018, validado E2E). **Detalhes, decisões não-óbvias e pendências em [`11-sessao-2026-06-09.md`](11-sessao-2026-06-09.md).** Tudo no ar (deploy automático); migrations 0017-0018 aplicadas.
+>
+> **Sessão 2026-05-29** entregou: tela de admin de usuários (`/admin/users`), ciclo de atendimento (assumir/encerrar com desfecho + log de eventos, migrations 0009-0011), inbox multi-operador (abas por estado/dono + exclusividade híbrida) e dashboard de Relatórios (`/reports`, migration 0012). **Detalhes, convenções não-óbvias e pendências em [`10-sessao-2026-05-29.md`](10-sessao-2026-05-29.md).**
 
 ## TL;DR
 
