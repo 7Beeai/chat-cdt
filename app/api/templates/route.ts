@@ -56,7 +56,9 @@ export async function GET(req: NextRequest) {
   const svc = createServiceClient()
   const { data, error } = await svc
     .from('template_inventory')
-    .select('template_name, language, category, status, body_text, components, is_active_in_cadence')
+    // template_inventory não tem coluna language; todos os templates são pt_BR
+    // e o picker já usa esse fallback quando o campo vem ausente.
+    .select('template_name, category, status, body_text, components, is_active_in_cadence')
     .eq('waba_id', wabaIdText)
     .eq('status', 'APPROVED')
     .order('template_name', { ascending: true })
