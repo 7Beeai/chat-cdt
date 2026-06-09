@@ -53,7 +53,7 @@ export default async function InboxLayout({
     .neq('handoff_reason', 'cancel')
     .order('priority', { ascending: false })
     .order('last_inbound_at', { ascending: false, nullsFirst: false })
-    .limit(300)
+    .limit(1000)
   if (openErr) console.error('[inbox] open handoffs fetch failed', openErr)
 
   // Encerrados: só handoffs encerrados (com motivo) — exclui auto-fechados da IA.
