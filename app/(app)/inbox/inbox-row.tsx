@@ -4,6 +4,7 @@ import {
   Check,
   CreditCard,
   FileText,
+  HeartHandshake,
   HelpCircle,
   Image as ImageIcon,
   Mic,
@@ -236,6 +237,18 @@ export function InboxRow({
               <span className="truncate">{unitLabel}</span>
             </span>
           ) : null}
+
+          {/* Relacionamento = minoria sem matrícula de cobrança; sinalizar só
+              esse trilho evita poluir a maioria (cobrança fica sem selo). */}
+          {conv.trilho === 'relacionamento' && (
+            <span
+              className="inline-flex shrink-0 items-center gap-1 rounded-full border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.04em] text-sky-400"
+              title="Contato do trilho de relacionamento (base adimplente)"
+            >
+              <HeartHandshake className="size-2.5 shrink-0" aria-hidden />
+              <span className="truncate">Relacionamento</span>
+            </span>
+          )}
 
           {isAssigned && ownerLabel && (
             <span

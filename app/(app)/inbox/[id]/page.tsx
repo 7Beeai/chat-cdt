@@ -40,6 +40,8 @@ export type DebtorContext = {
   ambiguous?: boolean
   name?: string | null
   matricula?: string | null
+  /** Último pagamento do cadastro de adimplente (só trilho relacionamento). */
+  ultimo_pagamento_rel?: string | null
   valor_aberto?: number | null
   status?: string | null
   regua?: string | null
@@ -157,7 +159,55 @@ export default async function ThreadPage({
     console.error('[inbox/[id]] messages lookup error', msgErr)
   }
 
-  const messages = (messagesRaw ?? []) as unknown as Message[]
+  let messages = (messagesRaw ?? []) as unknown as Message[]
+
+  // Templates de régua disparados pelo motor n8n (message_log não tem
+  // conversation_id — a RPC casa por unidade+telefone e dedupa por
+  // wa_message_id). Viram linhas sintéticas na timeline, somente exibição:
+  // não existem em `messages`, então realtime/status updates não se aplicam.
+  // Falha degrada para a timeline sem os disparos. Migration 0019.
+  const { data: cadenceRaw, error: cadenceErr } = await supabase.rpc(
+    'chat_cadence_history',
+    { p_conversation_id: id },
+  )
+  if (cadenceErr) {
+    console.error('[inbox/[id]] cadence history error', cadenceErr)
+  } else if (Array.isArray(cadenceRaw) && cadenceRaw.length > 0) {
+    const VALID_STATUS = new Set(['sent', 'delivered', 'read', 'failed'])
+    const synthetic: Message[] = (
+      cadenceRaw as {
+        id: number | string
+        template_name: string
+        sent_at: string
+        status: string | null
+        wa_message_id: string | null
+        body: string | null
+      }[]
+    )
+      .filter((r) => r.sent_at)
+      .map((r) => ({
+        id: `mlog-${r.id}`,
+        conversation_id: id,
+        wa_message_id: r.wa_message_id,
+        direction: 'out' as const,
+        type: 'template',
+        payload: {
+          template: { name: r.template_name },
+          body_text: r.body,
+        },
+        status: (VALID_STATUS.has(r.status ?? '')
+          ? r.status
+          : 'sent') as Message['status'],
+        error: null,
+        sent_by: 'ai' as const,
+        operator_id: null,
+        created_at: r.sent_at,
+      }))
+    messages = [...messages, ...synthetic].sort(
+      (a, b) =>
+        new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+    )
+  }
 
   // Pré-gera URLs assinadas (1h) para cada mensagem com mídia. Para cada msg
   // armazenamos { url, pending }:

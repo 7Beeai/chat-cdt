@@ -12,12 +12,15 @@ import {
 import {
   AlertOctagon,
   Clock,
+  FileText,
+  Image as ImageIcon,
   LayoutTemplate,
   Loader2,
   Lock,
   Paperclip,
   SendHorizontal,
   UserCheck,
+  X,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -45,6 +48,37 @@ type Props = {
 const MAX_CHARS = 4096
 const TWO_HOURS_MS = 2 * 60 * 60 * 1000
 
+// Espelho dos limites/whitelist do /api/messages/media (validação amigável
+// antes do upload; o servidor revalida).
+const MEDIA_ACCEPT =
+  'image/jpeg,image/png,image/webp,video/mp4,audio/aac,audio/mp4,audio/mpeg,audio/ogg,application/pdf,' +
+  'application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,' +
+  'application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,' +
+  'application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,' +
+  'text/plain,text/csv'
+
+type MediaKind = 'image' | 'video' | 'audio' | 'document'
+
+function mediaKindOf(mime: string): MediaKind {
+  if (mime.startsWith('image/')) return 'image'
+  if (mime.startsWith('video/')) return 'video'
+  if (mime.startsWith('audio/')) return 'audio'
+  return 'document'
+}
+
+const MEDIA_LIMITS: Record<MediaKind, number> = {
+  image: 5 * 1024 * 1024,
+  video: 16 * 1024 * 1024,
+  audio: 16 * 1024 * 1024,
+  document: 25 * 1024 * 1024,
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`
+}
+
 export function ComposerBar({
   conversationId,
   insideWindow,
@@ -58,9 +92,24 @@ export function ComposerBar({
   onOptimisticDrop,
 }: Props) {
   const [text, setText] = useState('')
+  const [file, setFile] = useState<File | null>(null)
   const [sending, setSending] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+
+  const onPickFile = useCallback((picked: File | null) => {
+    if (!picked) return
+    const kind = mediaKindOf(picked.type)
+    const limit = MEDIA_LIMITS[kind]
+    if (picked.size > limit) {
+      toast.error(
+        `Arquivo grande demais (${formatBytes(picked.size)}). Limite para ${kind === 'image' ? 'imagem' : kind === 'video' ? 'vídeo' : kind === 'audio' ? 'áudio' : 'documento'}: ${formatBytes(limit)}.`,
+      )
+      return
+    }
+    setFile(picked)
+  }, [])
 
   // Auto-grow do textarea conforme o usuário digita.
   useEffect(() => {
@@ -91,11 +140,115 @@ export function ComposerBar({
   const charsLeft = MAX_CHARS - text.length
   const showCounter = charsLeft < 300 // só perto do limite
 
+  const sendMedia = useCallback(
+    async (picked: File, caption: string) => {
+      const kind = mediaKindOf(picked.type)
+      const tempId = `temp-${crypto.randomUUID()}`
+      const optimistic: Message = {
+        id: tempId,
+        conversation_id: conversationId,
+        wa_message_id: null,
+        direction: 'out',
+        type: kind,
+        // Sem url/id no payload otimista → MediaBubble cai em "pendente"
+        // (spinner) até o realtime trazer a linha real com storage_path.
+        payload: {
+          [kind]: {
+            ...(caption && kind !== 'audio' ? { caption } : {}),
+            ...(picked.name ? { filename: picked.name } : {}),
+            mime_type: picked.type,
+          },
+        },
+        status: 'pending',
+        error: null,
+        sent_by: 'operator',
+        operator_id: userId,
+        created_at: new Date().toISOString(),
+      }
+
+      onOptimisticAppend(optimistic)
+      setFile(null)
+      setText('')
+      setSending(true)
+
+      try {
+        const fd = new FormData()
+        fd.append('file', picked)
+        fd.append('conversationId', conversationId)
+        if (caption) fd.append('caption', caption)
+
+        const r = await fetch('/api/messages/media', {
+          method: 'POST',
+          body: fd,
+        })
+
+        if (r.ok) {
+          const data = (await r.json()) as { ok: true; wa_message_id?: string }
+          onOptimisticPatch(tempId, {
+            wa_message_id: data.wa_message_id ?? null,
+            status: 'sent',
+          })
+        } else if (r.status === 409) {
+          onOptimisticDrop(tempId)
+          setFile(picked)
+          setText(caption)
+          toast.error('Fora da janela de 24h. Envie um template para retomar.')
+          setPickerOpen(true)
+        } else if (r.status === 413 || r.status === 415) {
+          onOptimisticDrop(tempId)
+          toast.error(
+            r.status === 413
+              ? 'Arquivo grande demais para o WhatsApp.'
+              : 'Tipo de arquivo não suportado pelo WhatsApp.',
+          )
+        } else {
+          let detail = ''
+          try {
+            const body = (await r.json()) as { details?: unknown }
+            detail =
+              typeof body?.details === 'object' && body.details
+                ? JSON.stringify(body.details).slice(0, 200)
+                : ''
+          } catch {
+            // ignore
+          }
+          onOptimisticPatch(tempId, { status: 'failed' })
+          toast.error(`Falha no envio do anexo: ${detail || `erro ${r.status}`}`)
+          setFile(picked)
+          setText(caption)
+        }
+      } catch (err) {
+        onOptimisticPatch(tempId, { status: 'failed' })
+        toast.error(
+          'Falha de rede ao enviar o anexo. ' +
+            (err instanceof Error ? err.message : ''),
+        )
+        setFile(picked)
+        setText(caption)
+      } finally {
+        setSending(false)
+        requestAnimationFrame(() => textareaRef.current?.focus())
+      }
+    },
+    [
+      conversationId,
+      userId,
+      onOptimisticAppend,
+      onOptimisticPatch,
+      onOptimisticDrop,
+    ],
+  )
+
   const onSubmit = useCallback(
     async (e?: FormEvent) => {
       e?.preventDefault()
       const trimmed = text.trim()
-      if (!trimmed || sending) return
+      if (sending) return
+      if (file) {
+        await sendMedia(file, trimmed)
+        return
+      }
+      if (!trimmed) return
 
       const tempId = `temp-${crypto.randomUUID()}`
       const optimistic: Message = {
@@ -176,6 +329,8 @@ export function ComposerBar({
     },
     [
       text,
+      file,
+      sendMedia,
       sending,
       conversationId,
       userId,
@@ -197,7 +352,8 @@ export function ComposerBar({
     [onSubmit],
   )
 
-  const canSend = !sending && text.trim().length > 0 && insideWindow
+  const canSend =
+    !sending && insideWindow && (text.trim().length > 0 || file !== null)
   const canTemplate = wabaId !== null
 
   // Read-only: another operator owns this conversation. Surface who, and offer
@@ -252,21 +408,60 @@ export function ComposerBar({
           </div>
         )}
 
+        {/* Chip do anexo selecionado (o texto digitado vira a legenda) */}
+        {file && (
+          <div className="mb-2 flex items-center gap-2 self-start rounded-xl border border-border bg-secondary/50 px-3 py-2">
+            {file.type.startsWith('image/') ? (
+              <ImageIcon className="size-4 shrink-0 text-sky-400" />
+            ) : (
+              <FileText className="size-4 shrink-0 text-sky-400" />
+            )}
+            <span className="max-w-[260px] truncate text-[12.5px] text-foreground">
+              {file.name}
+            </span>
+            <span className="font-mono text-[10px] text-muted-foreground">
+              {formatBytes(file.size)}
+            </span>
+            <button
+              type="button"
+              onClick={() => setFile(null)}
+              aria-label="Remover anexo"
+              className="ml-1 flex size-5 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+            >
+              <X className="size-3.5" />
+            </button>
+          </div>
+        )}
+
         <div
           className={cn(
             'group relative flex items-end gap-2 rounded-2xl border border-border bg-secondary/40 px-2 py-1.5 transition-colors',
             'focus-within:border-accent/60 focus-within:bg-secondary/60',
           )}
         >
-          {/* Attach button — disabled (Fase 2) */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={MEDIA_ACCEPT}
+            className="hidden"
+            onChange={(e) => {
+              onPickFile(e.target.files?.[0] ?? null)
+              e.target.value = '' // permite re-selecionar o mesmo arquivo
+            }}
+          />
           <Button
             type="button"
             size="icon-sm"
             variant="ghost"
-            disabled
-            className="mb-1 shrink-0 text-muted-foreground/60"
-            title="Anexos em breve"
-            aria-label="Anexar (em breve)"
+            disabled={!insideWindow || sending}
+            onClick={() => fileInputRef.current?.click()}
+            className="mb-1 shrink-0 text-muted-foreground/80 hover:text-foreground"
+            title={
+              insideWindow
+                ? 'Anexar imagem ou documento'
+                : 'Anexos só dentro da janela de 24h'
+            }
+            aria-label="Anexar arquivo"
           >
             <Paperclip />
           </Button>
@@ -295,9 +490,11 @@ export function ComposerBar({
             onChange={(e) => setText(e.target.value.slice(0, MAX_CHARS))}
             onKeyDown={onKeyDown}
             placeholder={
-              insideWindow
-                ? 'Mensagem para o cliente. Enter envia · Shift+Enter quebra linha.'
-                : 'Janela 24h expirou — clique no ícone de templates.'
+              !insideWindow
+                ? 'Janela 24h expirou — clique no ícone de templates.'
+                : file
+                  ? 'Legenda do anexo (opcional). Enter envia.'
+                  : 'Mensagem para o cliente. Enter envia · Shift+Enter quebra linha.'
             }
             rows={1}
             disabled={sending}

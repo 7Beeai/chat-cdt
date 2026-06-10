@@ -5,9 +5,11 @@ import { Search } from 'lucide-react'
 import { InboxRow } from '@/app/(app)/inbox/inbox-row'
 import {
   HANDOFF_LABEL,
+  TRILHO_LABEL,
   type ConversationListItem,
   type HandoffReason,
   type InboxTab,
+  type Trilho,
 } from '@/app/(app)/inbox/list-data'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
@@ -28,6 +30,8 @@ export function InboxListColumn({
   onSearch,
   reasonFilter,
   onReasonFilter,
+  trilhoFilter,
+  onTrilhoFilter,
   operatorFilter,
   onOperatorFilter,
   operators,
@@ -51,6 +55,8 @@ export function InboxListColumn({
   onSearch: (s: string) => void
   reasonFilter: HandoffReason | 'all'
   onReasonFilter: (r: HandoffReason | 'all') => void
+  trilhoFilter: Trilho | 'all'
+  onTrilhoFilter: (t: Trilho | 'all') => void
   operatorFilter: string | 'all'
   onOperatorFilter: (id: string | 'all') => void
   operators: { id: string; name: string }[]
@@ -72,6 +78,13 @@ export function InboxListColumn({
         value: r,
         label: HANDOFF_LABEL[r],
       })),
+  ]
+  const trilhoOptions = [
+    { value: 'all', label: 'Todos os trilhos' },
+    ...(Object.keys(TRILHO_LABEL) as Trilho[]).map((t) => ({
+      value: t,
+      label: TRILHO_LABEL[t],
+    })),
   ]
   const operatorOptions = [
     { value: 'all', label: 'Todos os operadores' },
@@ -116,6 +129,12 @@ export function InboxListColumn({
               value={reasonFilter}
               options={reasonOptions}
               onChange={(v) => onReasonFilter(v as HandoffReason | 'all')}
+            />
+            <FilterSelect
+              ariaLabel="Filtrar por trilho"
+              value={trilhoFilter}
+              options={trilhoOptions}
+              onChange={(v) => onTrilhoFilter(v as Trilho | 'all')}
             />
             {operators.length > 0 && (
               <FilterSelect

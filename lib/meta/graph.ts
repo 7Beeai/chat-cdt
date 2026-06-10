@@ -32,6 +32,42 @@ export async function graphSendMessage(
   }
 }
 
+export type GraphUploadResult = {
+  ok: boolean
+  status: number
+  body: any
+  mediaId?: string
+}
+
+/**
+ * Sobe um arquivo pra Cloud API (POST /{phone_number_id}/media) e devolve o
+ * media id — enviar por id é o caminho recomendado pela Meta (link exigiria
+ * URL pública estável; nossas signed URLs expiram).
+ */
+export async function graphUploadMedia(
+  phoneNumberId: string,
+  file: { bytes: Uint8Array; mimeType: string; filename: string }
+): Promise<GraphUploadResult> {
+  const fd = new FormData()
+  fd.append('messaging_product', 'whatsapp')
+  fd.append('type', file.mimeType)
+  fd.append(
+    'file',
+    new Blob([file.bytes as BlobPart], { type: file.mimeType }),
+    file.filename
+  )
+  const r = await fetch(
+    `https://graph.facebook.com/${VERSION}/${phoneNumberId}/media`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${TOKEN()}` },
+      body: fd,
+    }
+  )
+  const body = await r.json().catch(() => ({}))
+  return { ok: r.ok, status: r.status, body, mediaId: body?.id }
+}
+
 export async function graphListTemplates(wabaId: string) {
   const r = await fetch(
     `https://graph.facebook.com/${VERSION}/${wabaId}/message_templates?limit=200&fields=name,language,category,status,components`,

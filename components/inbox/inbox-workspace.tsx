@@ -18,11 +18,13 @@ import {
   matchesReason,
   matchesSearch,
   matchesTab,
+  matchesTrilho,
   sortItems,
   type ConversationListItem,
   type ConversationRow,
   type HandoffReason,
   type InboxTab,
+  type Trilho,
   type UnitVitals,
 } from '@/app/(app)/inbox/list-data'
 import { extractPreview } from '@/app/(app)/inbox/preview'
@@ -82,6 +84,7 @@ export function InboxWorkspace({
   )
   const [search, setSearch] = useState('')
   const [reasonFilter, setReasonFilter] = useState<HandoffReason | 'all'>('all')
+  const [trilhoFilter, setTrilhoFilter] = useState<Trilho | 'all'>('all')
   const [operatorFilter, setOperatorFilter] = useState<string | 'all'>('all')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkCloseOpen, setBulkCloseOpen] = useState(false)
@@ -278,10 +281,11 @@ export function InboxWorkspace({
             matchesTab(c, tab, currentUserId) &&
             matchesSearch(c, search) &&
             matchesReason(c, reasonFilter) &&
+            matchesTrilho(c, trilhoFilter) &&
             matchesOperator(c, operatorFilter),
         ),
       ),
-    [unitScoped, tab, search, reasonFilter, operatorFilter, currentUserId],
+    [unitScoped, tab, search, reasonFilter, trilhoFilter, operatorFilter, currentUserId],
   )
 
   // -- Keyboard J/K navigation within the visible rows -----------------------
@@ -364,6 +368,8 @@ export function InboxWorkspace({
         onSearch={setSearch}
         reasonFilter={reasonFilter}
         onReasonFilter={setReasonFilter}
+        trilhoFilter={trilhoFilter}
+        onTrilhoFilter={setTrilhoFilter}
         operatorFilter={operatorFilter}
         onOperatorFilter={setOperatorFilter}
         operators={operators}

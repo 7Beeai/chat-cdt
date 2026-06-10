@@ -122,7 +122,9 @@ export function ContextPanel({
       {/* Cobrança — escondida para contatos de relacionamento (sem dívida) */}
       {matched && debtor ? (
         <DebtSection debtor={debtor} />
-      ) : debtor?.trilho === 'relacionamento' ? null : (
+      ) : debtor?.trilho === 'relacionamento' ? (
+        <RelacionamentoSection debtor={debtor} />
+      ) : (
         <div className="border-b border-border px-5 pb-4 text-center">
           <p className="font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground">
             Cobrança
@@ -209,6 +211,29 @@ function TrilhoBadge({
       />
       {cfg.label}
     </span>
+  )
+}
+
+/**
+ * Cadastro do contato de relacionamento (base adimplente). A matrícula vem de
+ * adimplentes_base via chat_debtor_context (migration 0019) — antes o painel
+ * só mostrava telefone + nome para esse trilho.
+ */
+function RelacionamentoSection({ debtor }: { debtor: DebtorContext }) {
+  if (!debtor.matricula && !debtor.name) return null
+  return (
+    <Section label="Cadastro (adimplente)">
+      {debtor.matricula && (
+        <Fact label="Matrícula" value={debtor.matricula} mono />
+      )}
+      {debtor.ultimo_pagamento_rel && (
+        <Fact
+          label="Último pagamento"
+          value={fmtDate(debtor.ultimo_pagamento_rel)}
+          mono
+        />
+      )}
+    </Section>
   )
 }
 

@@ -74,36 +74,58 @@ export default async function InboxLayout({
     ...((closedRows ?? []) as unknown as ConversationListItem[]),
   ]
 
-  // One messages query for previews across the whole working set.
+  // Previews via RPC (POST): a versão antiga usava .in('conversation_id', ids)
+  // — com 600+ conversas a query string passava de 20KB, o PostgREST devolvia
+  // "Bad Request" e a lista INTEIRA renderizava "Sem mensagens ainda". A RPC
+  // também devolve exatamente a última mensagem por conversa (o corte global
+  // de ids*4 linhas perdia o preview de conversas quietas). Migration 0019.
   const ids = conversations.map((c) => c.id)
   const previewMap: Record<string, ConversationListItem['preview']> = {}
   if (ids.length > 0) {
-    const { data: msgs, error: msgErr } = await supabase
-      .from('messages')
-      .select('conversation_id, payload, direction, created_at, type')
-      .in('conversation_id', ids)
-      .order('created_at', { ascending: false })
-      .limit(ids.length * 4)
-    if (msgErr) console.error('[inbox] preview fetch failed', msgErr)
+    const { data: prevRows, error: prevErr } = await supabase.rpc(
+      'chat_conversation_previews',
+      { p_conversation_ids: ids },
+    )
+    if (prevErr) console.error('[inbox] preview fetch failed', prevErr)
 
-    for (const m of msgs ?? []) {
-      if (previewMap[m.conversation_id]) continue
-      const { text, kind } = extractPreview(
-        m.payload as Record<string, unknown> | null,
-        m.type as string | null,
-      )
+    for (const m of (prevRows ?? []) as {
+      conversation_id: string
+      payload: Record<string, unknown> | null
+      direction: 'in' | 'out'
+      msg_type: string | null
+      created_at: string
+    }[]) {
+      const { text, kind } = extractPreview(m.payload, m.msg_type)
       previewMap[m.conversation_id] = {
         text,
         kind,
-        direction: m.direction as 'in' | 'out',
-        createdAt: m.created_at as string,
+        direction: m.direction,
+        createdAt: m.created_at,
       }
+    }
+  }
+
+  // Trilho (cobrança × relacionamento) em lote para badge + filtro da lista.
+  // Falha degrada para null (sem badge). Migration 0019.
+  const trilhoMap: Record<string, ConversationListItem['trilho']> = {}
+  if (ids.length > 0) {
+    const { data: triRows, error: triErr } = await supabase.rpc(
+      'chat_conversation_trilhos',
+      { p_conversation_ids: ids },
+    )
+    if (triErr) console.error('[inbox] trilho fetch failed', triErr)
+    for (const t of (triRows ?? []) as {
+      conversation_id: string
+      trilho: 'cobranca' | 'relacionamento' | null
+    }[]) {
+      trilhoMap[t.conversation_id] = t.trilho
     }
   }
 
   const items: ConversationListItem[] = conversations.map((c) => ({
     ...c,
     preview: previewMap[c.id] ?? null,
+    trilho: trilhoMap[c.id] ?? null,
   }))
 
   // Substitui o nome exibido pelo nome VALIDADO da base de cobrança (formatado

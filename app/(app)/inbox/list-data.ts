@@ -34,6 +34,14 @@ export const INBOX_TABS: { value: InboxTab; label: string }[] = [
   { value: 'closed', label: 'Encerrados' },
 ]
 
+/** Trilho do contato: devedor (cobrança) ou base adimplente (relacionamento). */
+export type Trilho = 'cobranca' | 'relacionamento'
+
+export const TRILHO_LABEL: Record<Trilho, string> = {
+  cobranca: 'Cobrança',
+  relacionamento: 'Relacionamento',
+}
+
 export type ConversationListItem = {
   id: string
   unit_id: string | null
@@ -47,6 +55,8 @@ export type ConversationListItem = {
   contact: { id: string; wa_id: string; name: string | null } | null
   unit: { id: string; code: string; name: string } | null
   preview: MessagePreview | null
+  /** Resolvido em lote no layout (chat_conversation_trilhos, migration 0019). */
+  trilho?: Trilho | null
 }
 
 /**
@@ -133,6 +143,14 @@ export function matchesReason(
   reason: HandoffReason | 'all',
 ): boolean {
   return reason === 'all' || c.handoff_reason === reason
+}
+
+/** Secondary filter: trilho do contato ('all' = no filter). */
+export function matchesTrilho(
+  c: Pick<ConversationListItem, 'trilho'>,
+  trilho: Trilho | 'all',
+): boolean {
+  return trilho === 'all' || c.trilho === trilho
 }
 
 /** Secondary filter: assigned operator ('all' = no filter). */

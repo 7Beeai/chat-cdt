@@ -581,6 +581,11 @@ function renderTextBody(msg: Message): string {
     return text ?? '[mensagem vazia]'
   }
   if (msg.type === 'template') {
+    // Disparos de régua (chat_cadence_history) trazem o corpo do template
+    // resolvido de template_inventory em body_text — variáveis ficam como
+    // {{n}} (os valores reais só existem no n8n). Sem corpo, cai no nome.
+    const body = payload.body_text
+    if (typeof body === 'string' && body.length > 0) return body
     const tpl = payload.template as { name?: string } | undefined
     return `[template: ${tpl?.name ?? 'desconhecido'}]`
   }
