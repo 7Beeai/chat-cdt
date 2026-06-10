@@ -245,10 +245,16 @@ export default async function ThreadPage({
   // não existem em `messages`, então realtime/status updates não se aplicam.
   // Roda DEPOIS do debtor: nome/matrícula reais entram no lugar dos {{n}}.
   // Falha degrada para a timeline sem os disparos. Migration 0019.
-  const { data: cadenceRaw, error: cadenceErr } = await supabase.rpc(
-    'chat_cadence_history',
-    { p_conversation_id: id },
-  )
+  //
+  // DESLIGADO 2026-06-10 a pedido do Victor: o message_log parou de ser
+  // alimentado em 05/06 (réguas seguem disparando SEM log), então só
+  // apareceriam disparos retroativos — confundiria as operadoras. Religar
+  // quando o motor v2 estiver populando disparos_log, idealmente com corte
+  // de data pra não puxar retroativo (ver docs/13).
+  const SHOW_CADENCE_HISTORY = false
+  const { data: cadenceRaw, error: cadenceErr } = SHOW_CADENCE_HISTORY
+    ? await supabase.rpc('chat_cadence_history', { p_conversation_id: id })
+    : { data: null, error: null }
   if (cadenceErr) {
     console.error('[inbox/[id]] cadence history error', cadenceErr)
   } else if (Array.isArray(cadenceRaw) && cadenceRaw.length > 0) {
