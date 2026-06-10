@@ -297,12 +297,16 @@ begin
     limit 50
   ) ml
   left join lateral (
-    select comp->>'text' as body_text
-    from public.template_inventory t,
-         jsonb_array_elements(t.components) comp
+    select coalesce(
+             t.body_text,
+             (select comp->>'text'
+              from jsonb_array_elements(t.components) comp
+              where comp->>'type' = 'BODY'
+              limit 1)
+           ) as body_text
+    from public.template_inventory t
     where t.waba_id = v_waba
-      and t.name = ml.template_name
-      and comp->>'type' = 'BODY'
+      and t.template_name = ml.template_name
     limit 1
   ) ti on true;
 
