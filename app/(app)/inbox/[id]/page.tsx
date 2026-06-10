@@ -107,6 +107,36 @@ export type ConversationView = {
   unit: { id: string; code: string; name: string } | null
 }
 
+/**
+ * Substitui os {{n}} do corpo do template usando os valores de EXEMPLO do
+ * template (registrados na Meta) pra inferir o que cada variável significa:
+ *   - padrão de matrícula (UF + dígitos)  → matrícula real do cliente
+ *   - padrão de dinheiro (1.234,56)       → ‹valor› (o valor da época do
+ *     disparo só existe no n8n; mostrar o valor atual seria mentir)
+ *   - texto tipo nome                     → primeiro nome real do cliente
+ * Sem exemplo ou padrão desconhecido, mantém o {{n}} como está.
+ */
+function fillTemplateBody(
+  body: string,
+  example: unknown,
+  debtor: DebtorContext | null,
+  contactName: string | null | undefined,
+): string {
+  const ex = Array.isArray(example) ? (example as unknown[]) : null
+  return body.replace(/\{\{(\d+)\}\}/g, (raw, nStr: string) => {
+    const sample = ex?.[Number(nStr) - 1]
+    if (typeof sample !== 'string') return raw
+    const s = sample.trim()
+    if (/^[A-Z]{2,3}\d{5,}$/.test(s)) return debtor?.matricula ?? '‹matrícula›'
+    if (/^(R\$\s?)?\d{1,3}(\.\d{3})*,\d{2}$/.test(s)) return '‹valor›'
+    if (/^[\p{L}][\p{L} .'-]*$/u.test(s)) {
+      const first = (debtor?.name ?? contactName ?? '').trim().split(/\s+/)[0]
+      return first || '‹nome›'
+    }
+    return raw
+  })
+}
+
 export default async function ThreadPage({
   params,
 }: {
@@ -161,54 +191,6 @@ export default async function ThreadPage({
 
   let messages = (messagesRaw ?? []) as unknown as Message[]
 
-  // Templates de régua disparados pelo motor n8n (message_log não tem
-  // conversation_id — a RPC casa por unidade+telefone e dedupa por
-  // wa_message_id). Viram linhas sintéticas na timeline, somente exibição:
-  // não existem em `messages`, então realtime/status updates não se aplicam.
-  // Falha degrada para a timeline sem os disparos. Migration 0019.
-  const { data: cadenceRaw, error: cadenceErr } = await supabase.rpc(
-    'chat_cadence_history',
-    { p_conversation_id: id },
-  )
-  if (cadenceErr) {
-    console.error('[inbox/[id]] cadence history error', cadenceErr)
-  } else if (Array.isArray(cadenceRaw) && cadenceRaw.length > 0) {
-    const VALID_STATUS = new Set(['sent', 'delivered', 'read', 'failed'])
-    const synthetic: Message[] = (
-      cadenceRaw as {
-        id: number | string
-        template_name: string
-        sent_at: string
-        status: string | null
-        wa_message_id: string | null
-        body: string | null
-      }[]
-    )
-      .filter((r) => r.sent_at)
-      .map((r) => ({
-        id: `mlog-${r.id}`,
-        conversation_id: id,
-        wa_message_id: r.wa_message_id,
-        direction: 'out' as const,
-        type: 'template',
-        payload: {
-          template: { name: r.template_name },
-          body_text: r.body,
-        },
-        status: (VALID_STATUS.has(r.status ?? '')
-          ? r.status
-          : 'sent') as Message['status'],
-        error: null,
-        sent_by: 'ai' as const,
-        operator_id: null,
-        created_at: r.sent_at,
-      }))
-    messages = [...messages, ...synthetic].sort(
-      (a, b) =>
-        new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
-    )
-  }
-
   // Pré-gera URLs assinadas (1h) para cada mensagem com mídia. Para cada msg
   // armazenamos { url, pending }:
   //   - url: signed URL ou null
@@ -255,6 +237,63 @@ export default async function ThreadPage({
   if (debtor?.name && conversation.contact) {
     const validated = formatPersonName(debtor.name)
     if (validated) conversation.contact.name = validated
+  }
+
+  // Templates de régua disparados pelo motor n8n (message_log/disparos_log não
+  // têm conversation_id — a RPC casa por unidade+telefone e dedupa por
+  // wa_message_id). Viram linhas sintéticas na timeline, somente exibição:
+  // não existem em `messages`, então realtime/status updates não se aplicam.
+  // Roda DEPOIS do debtor: nome/matrícula reais entram no lugar dos {{n}}.
+  // Falha degrada para a timeline sem os disparos. Migration 0019.
+  const { data: cadenceRaw, error: cadenceErr } = await supabase.rpc(
+    'chat_cadence_history',
+    { p_conversation_id: id },
+  )
+  if (cadenceErr) {
+    console.error('[inbox/[id]] cadence history error', cadenceErr)
+  } else if (Array.isArray(cadenceRaw) && cadenceRaw.length > 0) {
+    const VALID_STATUS = new Set(['sent', 'delivered', 'read', 'failed'])
+    const synthetic: Message[] = (
+      cadenceRaw as {
+        id: number | string
+        template_name: string
+        sent_at: string
+        status: string | null
+        wa_message_id: string | null
+        body: string | null
+        example: unknown
+      }[]
+    )
+      .filter((r) => r.sent_at)
+      .map((r) => ({
+        id: `mlog-${r.id}`,
+        conversation_id: id,
+        wa_message_id: r.wa_message_id,
+        direction: 'out' as const,
+        type: 'template',
+        payload: {
+          template: { name: r.template_name },
+          body_text: r.body
+            ? fillTemplateBody(
+                r.body,
+                r.example,
+                debtor,
+                conversation.contact?.name,
+              )
+            : null,
+        },
+        status: (VALID_STATUS.has(r.status ?? '')
+          ? r.status
+          : 'sent') as Message['status'],
+        error: null,
+        sent_by: 'ai' as const,
+        operator_id: null,
+        created_at: r.sent_at,
+      }))
+    messages = [...messages, ...synthetic].sort(
+      (a, b) =>
+        new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+    )
   }
 
   // Nomes dos operadores que enviaram nesta conversa (para a badge de autoria).

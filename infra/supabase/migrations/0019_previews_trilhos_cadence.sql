@@ -29,6 +29,8 @@
 -- PRÉ-REQUISITO (rodar UMA vez, fora de transação):
 --   CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ml_unit_matchkey
 --     ON public.message_log (unit_id, public.chat_phone_match_key(to_whatsapp));
+--   CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_dl_unit_matchkey
+--     ON public.disparos_log (unit_id, public.chat_phone_match_key(telefone));
 -- ---------------------------------------------------------------------------
 
 -- A. Última mensagem de cada conversa, em lote ------------------------------
@@ -242,6 +244,12 @@ comment on function public.chat_debtor_context(uuid) is
   'Contexto de cobrança/relacionamento (JSONB, somente leitura) de uma conversa, casado por telefone+unidade. Relacionamento inclui matricula/name de adimplentes_base (0019). Valores em REAIS. Gated por chat_user_has_unit.';
 
 -- D. Templates de régua do motor n8n no histórico ----------------------------
+-- Duas fontes, mesma timeline:
+--   * message_log  — motor antigo (F0/F1); parou de disparar em 2026-06-05.
+--   * disparos_log — motor v2 (assume daqui pra frente; vazio até o go-live).
+-- 'example' = example.body_text do componente BODY — o app usa os padrões dos
+-- valores de exemplo pra inferir o que cada {{n}} significa (nome/matrícula/
+-- valor) e renderizar legível (os valores reais só existem no n8n no envio).
 create or replace function public.chat_cadence_history(p_conversation_id uuid)
 returns jsonb
 language plpgsql
@@ -277,23 +285,46 @@ begin
              'sent_at',       ml.sent_at,
              'status',        ml.status,
              'wa_message_id', ml.wa_message_id,
-             'body',          ti.body_text
+             'body',          ti.body_text,
+             'example',       ti.example
            )
            order by ml.sent_at
          ), '[]'::jsonb)
     into v_out
   from (
-    select l.id, l.template_name, l.sent_at, l.status, l.wa_message_id
-    from public.message_log l
-    where l.unit_id = v_unit
-      and public.chat_phone_match_key(l.to_whatsapp) = v_key
-      and l.template_name is not null
-      and (l.wa_message_id is null or not exists (
-            select 1 from public.messages m
-            where m.conversation_id = p_conversation_id
-              and m.wa_message_id = l.wa_message_id
-          ))
-    order by l.sent_at desc
+    select * from (
+      select 'ml-' || l.id::text as id, l.template_name, l.sent_at,
+             l.status, l.wa_message_id
+      from public.message_log l
+      where l.unit_id = v_unit
+        and public.chat_phone_match_key(l.to_whatsapp) = v_key
+        and l.template_name is not null
+        and (l.wa_message_id is null or not exists (
+              select 1 from public.messages m
+              where m.conversation_id = p_conversation_id
+                and m.wa_message_id = l.wa_message_id
+            ))
+      union all
+      select 'dl-' || d.id::text, d.template_name, d.sent_at,
+             case
+               when d.failed_at    is not null then 'failed'
+               when d.read_at      is not null then 'read'
+               when d.delivered_at is not null then 'delivered'
+               else 'sent'
+             end,
+             d.wa_message_id
+      from public.disparos_log d
+      where d.unit_id = v_unit
+        and public.chat_phone_match_key(d.telefone) = v_key
+        and d.template_name is not null
+        and d.sent_at is not null
+        and (d.wa_message_id is null or not exists (
+              select 1 from public.messages m
+              where m.conversation_id = p_conversation_id
+                and m.wa_message_id = d.wa_message_id
+            ))
+    ) u
+    order by u.sent_at desc
     limit 50
   ) ml
   left join lateral (
@@ -303,7 +334,11 @@ begin
               from jsonb_array_elements(t.components) comp
               where comp->>'type' = 'BODY'
               limit 1)
-           ) as body_text
+           ) as body_text,
+           (select comp->'example'->'body_text'->0
+            from jsonb_array_elements(t.components) comp
+            where comp->>'type' = 'BODY'
+            limit 1) as example
     from public.template_inventory t
     where t.waba_id = v_waba
       and t.template_name = ml.template_name
