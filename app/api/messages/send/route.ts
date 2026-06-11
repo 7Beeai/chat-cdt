@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { graphSendMessage } from '@/lib/meta/graph'
+import { handleGraphOutOfWindow, isGraphOutOfWindow } from '@/lib/meta/window'
 
 export const runtime = 'nodejs'
 
@@ -112,6 +113,12 @@ export async function POST(req: NextRequest) {
   const result = await graphSendMessage(phone.phone_number_id, graphBody)
   if (!result.ok) {
     console.error('[messages/send] graph error', result.status, result.body)
+    // Janela local aberta mas a Meta recusou (131047/131026): trata como
+    // out-of-window — zera a janela e devolve o mesmo 409 do gate local.
+    // Não se aplica a template (template é justamente o caminho de retomada).
+    if (body.type !== 'template' && isGraphOutOfWindow(result.body)) {
+      return handleGraphOutOfWindow(conv.id, result.body)
+    }
     return NextResponse.json(
       { error: 'graph', status: result.status, details: result.body },
       { status: 502 }

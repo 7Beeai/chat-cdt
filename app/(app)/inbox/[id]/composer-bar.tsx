@@ -22,6 +22,7 @@ import {
   UserCheck,
   X,
 } from 'lucide-react'
+import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
@@ -37,12 +38,20 @@ type Props = {
   expiresAt: string | null
   wabaId: string | null
   userId: string
+  /** Primeiro nome do contato — preenche o {{1}} dos templates de retomada. */
+  contactFirstName: string
   /** Set when the conversation belongs to another operator (read-only). */
   lockedBy?: string | null
   onTakeOver?: () => void
   onOptimisticAppend: (msg: Message) => void
   onOptimisticPatch: (tempId: string, patch: Partial<Message>) => void
   onOptimisticDrop: (tempId: string) => void
+  /** Resolve a bolha de mídia otimista com o storage_path do response. */
+  onOptimisticMediaResolved: (
+    tempId: string,
+    type: string,
+    storagePath: string | null,
+  ) => void
 }
 
 const MAX_CHARS = 4096
@@ -85,12 +94,15 @@ export function ComposerBar({
   expiresAt,
   wabaId,
   userId,
+  contactFirstName,
   lockedBy,
   onTakeOver,
   onOptimisticAppend,
   onOptimisticPatch,
   onOptimisticDrop,
+  onOptimisticMediaResolved,
 }: Props) {
+  const router = useRouter()
   const [text, setText] = useState('')
   const [file, setFile] = useState<File | null>(null)
   const [sending, setSending] = useState(false)
@@ -183,17 +195,27 @@ export function ComposerBar({
         })
 
         if (r.ok) {
-          const data = (await r.json()) as { ok: true; wa_message_id?: string }
+          const data = (await r.json()) as {
+            ok: true
+            wa_message_id?: string
+            storage_path?: string | null
+          }
           onOptimisticPatch(tempId, {
             wa_message_id: data.wa_message_id ?? null,
             status: 'sent',
           })
+          // Resolve a bolha na hora com o storage_path do response — sem
+          // esperar o eco do realtime (que pode atrasar ou não chegar).
+          onOptimisticMediaResolved(tempId, kind, data.storage_path ?? null)
         } else if (r.status === 409) {
           onOptimisticDrop(tempId)
           setFile(picked)
           setText(caption)
           toast.error('Fora da janela de 24h. Envie um template para retomar.')
           setPickerOpen(true)
+          // A janela pode ter sido zerada server-side (Meta recusou com
+          // 131047): refetch da conversa pra travar o composer ao vivo.
+          router.refresh()
         } else if (r.status === 413 || r.status === 415) {
           onOptimisticDrop(tempId)
           toast.error(
@@ -233,9 +255,11 @@ export function ComposerBar({
     [
       conversationId,
       userId,
+      router,
       onOptimisticAppend,
       onOptimisticPatch,
       onOptimisticDrop,
+      onOptimisticMediaResolved,
     ],
   )
 
@@ -296,6 +320,7 @@ export function ComposerBar({
           setText(trimmed)
           toast.error('Fora da janela de 24h. Envie um template para retomar.')
           setPickerOpen(true)
+          router.refresh()
         } else if (r.status === 502) {
           let detail = ''
           try {
@@ -334,6 +359,7 @@ export function ComposerBar({
       sending,
       conversationId,
       userId,
+      router,
       onOptimisticAppend,
       onOptimisticPatch,
       onOptimisticDrop,
@@ -497,7 +523,10 @@ export function ComposerBar({
                   : 'Mensagem para o cliente. Enter envia · Shift+Enter quebra linha.'
             }
             rows={1}
-            disabled={sending}
+            // Fora da janela o campo TRAVA (não só o envio) — operador
+            // limitado não fica "conversando com ninguém". O caminho fora da
+            // janela é o botão de templates, que permanece ativo.
+            disabled={!insideWindow || sending}
             className={cn(
               'block min-h-9 w-full resize-none border-0 bg-transparent px-2 py-2 text-[15px] leading-relaxed text-foreground placeholder:text-muted-foreground/60 focus-visible:ring-0 dark:bg-transparent',
             )}
@@ -560,6 +589,7 @@ export function ComposerBar({
           onClose={() => setPickerOpen(false)}
           conversationId={conversationId}
           wabaId={wabaId!}
+          contactFirstName={contactFirstName}
         />
       )}
     </div>

@@ -20,6 +20,7 @@ import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 
 import { createClient } from '@/lib/supabase/client'
+import { ensureRealtimeAuth } from '@/lib/supabase/realtime'
 import { createMediaSignedUrl, extractMediaInfo } from '@/lib/storage/media'
 import { dateDividerLabel, dateKey } from '@/lib/format/time'
 import { cn } from '@/lib/utils'
@@ -126,6 +127,37 @@ export function ThreadClient({
     useState<Record<string, MediaState>>(initialMediaUrls)
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const endRef = useRef<HTMLDivElement | null>(null)
+  const supabase = useMemo(() => createClient(), [])
+
+  // Resolve a signed URL de uma linha de mídia (realtime, polling ou merge).
+  // mediaUrlsRef evita re-resolver o que já tem URL sem amarrar o callback ao
+  // estado (que mudaria a identidade a cada setMediaUrls).
+  const mediaUrlsRef = useRef(mediaUrls)
+  mediaUrlsRef.current = mediaUrls
+  const resolveMediaUrlIfNeeded = useCallback(
+    async (row: Message) => {
+      const info = extractMediaInfo(row.payload, row.type)
+      if (!info) return
+      const sub = (row.payload as Record<string, unknown> | null)?.[
+        row.type
+      ] as { storage_path?: string } | undefined
+      const path = sub?.storage_path
+      if (!path) {
+        setMediaUrls((prev) => ({
+          ...prev,
+          [row.id]: prev[row.id] ?? { url: null, pending: true },
+        }))
+        return
+      }
+      if (mediaUrlsRef.current[row.id]?.url) return
+      const url = await createMediaSignedUrl(supabase, path, 3600)
+      setMediaUrls((prev) => ({
+        ...prev,
+        [row.id]: { url, pending: false },
+      }))
+    },
+    [supabase],
+  )
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
     requestAnimationFrame(() => {
@@ -139,92 +171,210 @@ export function ThreadClient({
   }, [])
 
   useEffect(() => {
-    const supabase = createClient()
-    const channel = supabase
-      .channel(`thread:${conversation.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'messages',
-          filter: `conversation_id=eq.${conversation.id}`,
-        },
-        (payload) => {
-          const row = payload.new as Message
-          setMessages((prev) => {
-            const byWaId = row.wa_message_id
-              ? prev.findIndex((m) => m.wa_message_id === row.wa_message_id)
-              : -1
-            const byId = prev.findIndex((m) => m.id === row.id)
-            const idx = byWaId !== -1 ? byWaId : byId
-            if (idx !== -1) {
+    let channel: ReturnType<typeof supabase.channel> | null = null
+    let cancelled = false
+
+    // Eco do INSERT realtime chegando ANTES do response HTTP: o otimista
+    // ainda não tem wa_message_id, então não casa por byWaId/byId. Merge na
+    // bolha temp- recente do mesmo operador/tipo em vez de duplicar.
+    const findEchoIdx = (prev: Message[], row: Message) =>
+      row.direction === 'out'
+        ? prev.findIndex(
+            (m) =>
+              m.id.startsWith('temp-') &&
+              !m.wa_message_id &&
+              m.type === row.type &&
+              m.operator_id === row.operator_id &&
+              Date.now() - new Date(m.created_at).getTime() < 30_000,
+          )
+        : -1
+
+    const applyInsert = (row: Message) => {
+      let mergedFromId: string | null = null
+      setMessages((prev) => {
+        const byWaId = row.wa_message_id
+          ? prev.findIndex((m) => m.wa_message_id === row.wa_message_id)
+          : -1
+        const byId = prev.findIndex((m) => m.id === row.id)
+        let idx = byWaId !== -1 ? byWaId : byId
+        if (idx === -1) idx = findEchoIdx(prev, row)
+        if (idx !== -1) {
+          if (prev[idx].id !== row.id) mergedFromId = prev[idx].id
+          const next = prev.slice()
+          next[idx] = { ...prev[idx], ...row }
+          return next
+        }
+        return [...prev, row]
+      })
+      // O merge troca o id da bolha (temp- → id real): transfere o estado de
+      // mídia já resolvido pra não voltar pro spinner.
+      if (mergedFromId) {
+        const fromId = mergedFromId
+        setMediaUrls((prev) =>
+          prev[fromId] ? { ...prev, [row.id]: prev[row.id] ?? prev[fromId] } : prev,
+        )
+      }
+      void resolveMediaUrlIfNeeded(row)
+    }
+
+    void ensureRealtimeAuth(supabase).then(() => {
+      if (cancelled) return
+      channel = supabase
+        .channel(`thread:${conversation.id}`)
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'messages',
+            filter: `conversation_id=eq.${conversation.id}`,
+          },
+          (payload) => {
+            applyInsert(payload.new as Message)
+            scrollToBottom()
+          },
+        )
+        .on(
+          'postgres_changes',
+          {
+            event: 'UPDATE',
+            schema: 'public',
+            table: 'messages',
+            filter: `conversation_id=eq.${conversation.id}`,
+          },
+          (payload) => {
+            const row = payload.new as Message
+            setMessages((prev) => {
+              const idx = prev.findIndex((m) => m.id === row.id)
+              if (idx === -1) return prev
               const next = prev.slice()
               next[idx] = { ...prev[idx], ...row }
               return next
-            }
-            return [...prev, row]
-          })
-          void resolveMediaUrlIfNeeded(row)
-          scrollToBottom()
-        },
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'messages',
-          filter: `conversation_id=eq.${conversation.id}`,
-        },
-        (payload) => {
-          const row = payload.new as Message
-          setMessages((prev) => {
-            const idx = prev.findIndex((m) => m.id === row.id)
-            if (idx === -1) return prev
-            const next = prev.slice()
-            next[idx] = { ...prev[idx], ...row }
-            return next
-          })
-          void resolveMediaUrlIfNeeded(row)
-        },
-      )
-      .subscribe()
+            })
+            void resolveMediaUrlIfNeeded(row)
+          },
+        )
+        .subscribe((status, err) => {
+          if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+            console.warn('[thread] realtime channel', status, err)
+          }
+        })
+    })
 
     return () => {
-      supabase.removeChannel(channel)
+      cancelled = true
+      if (channel) void supabase.removeChannel(channel)
     }
+  }, [conversation.id, scrollToBottom, supabase, resolveMediaUrlIfNeeded])
 
-    async function resolveMediaUrlIfNeeded(row: Message) {
-      const info = extractMediaInfo(row.payload, row.type)
-      if (!info) return
-      const sub = (row.payload as Record<string, unknown> | null)?.[row.type] as
-        | { storage_path?: string }
-        | undefined
-      const path = sub?.storage_path
-      if (!path) {
-        setMediaUrls((prev) => ({
-          ...prev,
-          [row.id]: prev[row.id] ?? { url: null, pending: true },
-        }))
-        return
+  // -- Polling de fallback (30s, aba visível): realtime é acelerador, não
+  // dependência. Refetch leve das messages da conversa aberta + merge que
+  // preserva otimistas ainda não persistidos e linhas sintéticas mlog-.
+  useEffect(() => {
+    let inFlight = false
+    const refetch = async () => {
+      if (document.visibilityState !== 'visible' || inFlight) return
+      inFlight = true
+      try {
+        // As 100 mais RECENTES (desc + reverse) — é o que o fallback precisa
+        // cobrir quando o realtime não entrega.
+        const { data, error } = await supabase
+          .from('messages')
+          .select(
+            'id, conversation_id, wa_message_id, direction, type, payload, status, error, sent_by, operator_id, created_at',
+          )
+          .eq('conversation_id', conversation.id)
+          .order('created_at', { ascending: false })
+          .limit(100)
+        if (error || !data) return
+        const server = (data as unknown as Message[]).reverse()
+        setMessages((prev) => {
+          const serverIds = new Set(server.map((m) => m.id))
+          const serverWaIds = new Set(
+            server.map((m) => m.wa_message_id).filter(Boolean),
+          )
+          // União: o servidor ganha nos conflitos (id ou wa_message_id), mas
+          // nada local é descartado — preserva otimistas em voo (temp-),
+          // histórico sintético (mlog-) e mensagens antigas além das 100.
+          const localOnly = prev.filter(
+            (m) =>
+              !serverIds.has(m.id) &&
+              !(m.wa_message_id && serverWaIds.has(m.wa_message_id)),
+          )
+          const merged = [...server, ...localOnly].sort(
+            (a, b) =>
+              new Date(a.created_at).getTime() -
+              new Date(b.created_at).getTime(),
+          )
+          return merged
+        })
+        for (const m of server) void resolveMediaUrlIfNeeded(m)
+      } finally {
+        inFlight = false
       }
-      if (mediaUrls[row.id]?.url) return
-      const url = await createMediaSignedUrl(supabase, path, 3600)
-      setMediaUrls((prev) => ({
-        ...prev,
-        [row.id]: { url, pending: false },
-      }))
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conversation.id, scrollToBottom])
+    const t = setInterval(() => void refetch(), 30_000)
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void refetch()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      clearInterval(t)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [conversation.id, supabase, resolveMediaUrlIfNeeded])
 
   const appendOptimistic = useCallback(
     (msg: Message) => {
+      // Mídia otimista nasce em "pendente" (spinner) — sem isso o fallback
+      // do MediaBubble é "não disponível", que assusta o operador.
+      if (MEDIA_TYPES.has(msg.type)) {
+        setMediaUrls((prev) => ({
+          ...prev,
+          [msg.id]: { url: null, pending: true },
+        }))
+      }
       setMessages((prev) => [...prev, msg])
       scrollToBottom()
     },
     [scrollToBottom],
+  )
+
+  // Pós-envio de anexo: a rota já devolve storage_path — resolve a signed URL
+  // na hora, sem depender de realtime, e grava o path no payload do otimista
+  // (assim merges posteriores não regridem a bolha pro spinner).
+  const resolveOptimisticMedia = useCallback(
+    async (tempId: string, type: string, storagePath: string | null) => {
+      if (!storagePath) {
+        setMediaUrls((prev) => ({
+          ...prev,
+          [tempId]: { url: null, pending: false },
+        }))
+        return
+      }
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === tempId
+            ? {
+                ...m,
+                payload: {
+                  ...m.payload,
+                  [type]: {
+                    ...((m.payload?.[type] as Record<string, unknown>) ?? {}),
+                    storage_path: storagePath,
+                  },
+                },
+              }
+            : m,
+        ),
+      )
+      const url = await createMediaSignedUrl(supabase, storagePath, 3600)
+      setMediaUrls((prev) => ({
+        ...prev,
+        [tempId]: { url, pending: false },
+      }))
+    },
+    [supabase],
   )
 
   const patchOptimistic = useCallback(
@@ -244,13 +394,26 @@ export function ThreadClient({
     setMessages((prev) => prev.filter((m) => m.id !== tempId))
   }, [])
 
+  // Ticker: sem ele, insideWindow é uma foto do page load e a janela "expira"
+  // só na próxima navegação — o composer ficava liberado com a janela fechada.
+  const [windowTick, setWindowTick] = useState(0)
+  useEffect(() => {
+    const t = setInterval(() => setWindowTick((n) => n + 1), 30_000)
+    return () => clearInterval(t)
+  }, [])
+
   const insideWindow = useMemo(() => {
     const exp = conversation.customer_window_expires_at
     if (!exp) return false
     return new Date(exp).getTime() > Date.now()
-  }, [conversation.customer_window_expires_at])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversation.customer_window_expires_at, windowTick])
 
   const wabaTextId = conversation.phone?.waba?.waba_id ?? null
+  // {{1}} dos templates de retomada — nome validado do CRM (o page.tsx já
+  // trocou contact.name), fallback nome do WhatsApp, nunca string vazia.
+  const contactFirstName =
+    (conversation.contact?.name ?? '').trim().split(/\s+/)[0] || 'cliente'
   const items = useMemo(() => buildThreadItems(messages), [messages])
 
   // Hybrid exclusivity: if the conversation belongs to ANOTHER operator, the
@@ -324,11 +487,13 @@ export function ThreadClient({
         expiresAt={conversation.customer_window_expires_at}
         wabaId={wabaTextId}
         userId={userId}
+        contactFirstName={contactFirstName}
         lockedBy={lockedBy}
         onTakeOver={handleTakeOver}
         onOptimisticAppend={appendOptimistic}
         onOptimisticPatch={patchOptimistic}
         onOptimisticDrop={removeOptimistic}
+        onOptimisticMediaResolved={resolveOptimisticMedia}
       />
     </div>
   )

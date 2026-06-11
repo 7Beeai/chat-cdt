@@ -30,6 +30,7 @@ import {
 import { extractPreview } from '@/app/(app)/inbox/preview'
 import type { CloseOutcome } from '@/app/(app)/inbox/outcomes'
 import { createClient } from '@/lib/supabase/client'
+import { ensureRealtimeAuth } from '@/lib/supabase/realtime'
 import { cn } from '@/lib/utils'
 
 import { HexagonPattern } from '@/components/ui/hexagon-pattern'
@@ -118,7 +119,15 @@ export function InboxWorkspace({
   // -- Realtime: keep the handoff working set in sync ------------------------
   useEffect(() => {
     const supabase = createClient()
-    const channel = supabase
+    let channel: ReturnType<typeof supabase.channel> | null = null
+    let cancelled = false
+
+    // setAuth ANTES do subscribe: sem isso a subscription nasce com claims
+    // anon e a RLS de conversations/messages filtra todos os eventos (causa
+    // raiz da lista não atualizar ao vivo — ver lib/supabase/realtime.ts).
+    void ensureRealtimeAuth(supabase).then(() => {
+      if (cancelled) return
+      channel = supabase
       .channel('inbox-workspace')
       .on(
         'postgres_changes',
@@ -212,12 +221,34 @@ export function InboxWorkspace({
           })
         },
       )
-      .subscribe()
+      .subscribe((status, err) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.warn('[inbox-workspace] realtime channel', status, err)
+        }
+      })
+    })
 
     return () => {
-      supabase.removeChannel(channel)
+      cancelled = true
+      if (channel) void supabase.removeChannel(channel)
     }
   }, [])
+
+  // -- Polling de fallback: realtime é acelerador, não dependência -----------
+  // router.refresh() re-executa o layout no servidor (lista + previews via
+  // RPC) e o effect acima re-sincroniza `items` a partir de `initial`. Só
+  // quando a aba está visível; ao voltar pra aba, atualiza na hora.
+  useEffect(() => {
+    const refreshIfVisible = () => {
+      if (document.visibilityState === 'visible') router.refresh()
+    }
+    const t = setInterval(refreshIfVisible, 60_000)
+    document.addEventListener('visibilitychange', refreshIfVisible)
+    return () => {
+      clearInterval(t)
+      document.removeEventListener('visibilitychange', refreshIfVisible)
+    }
+  }, [router])
 
   // -- Derived: per-unit set, tab counts, vitals, visible rows ---------------
   const unitScoped = useMemo(

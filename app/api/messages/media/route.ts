@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { graphSendMessage, graphUploadMedia } from '@/lib/meta/graph'
+import { handleGraphOutOfWindow, isGraphOutOfWindow } from '@/lib/meta/window'
 import { buildStoragePath, MEDIA_BUCKET } from '@/lib/storage/media'
 
 export const runtime = 'nodejs'
@@ -165,6 +166,11 @@ export async function POST(req: NextRequest) {
   const result = await graphSendMessage(phone.phone_number_id, graphBody)
   if (!result.ok) {
     console.error('[messages/media] graph send error', result.status, result.body)
+    // Estado divergente: nossa janela diz aberta, a Meta recusou (131047/
+    // 131026). Zera a janela e devolve o 409 padrão de out-of-window.
+    if (isGraphOutOfWindow(result.body)) {
+      return handleGraphOutOfWindow(conv.id, result.body)
+    }
     return NextResponse.json(
       { error: 'graph', status: result.status, details: result.body },
       { status: 502 }
