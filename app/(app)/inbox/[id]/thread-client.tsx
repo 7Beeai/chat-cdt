@@ -270,7 +270,7 @@ export function ThreadClient({
 
   // -- Polling de fallback (30s, aba visível): realtime é acelerador, não
   // dependência. Refetch leve das messages da conversa aberta + merge que
-  // preserva otimistas ainda não persistidos e linhas sintéticas mlog-.
+  // preserva otimistas ainda não persistidos e linhas sintéticas ml-/mi-.
   useEffect(() => {
     let inFlight = false
     const refetch = async () => {
@@ -296,7 +296,7 @@ export function ThreadClient({
           )
           // União: o servidor ganha nos conflitos (id ou wa_message_id), mas
           // nada local é descartado — preserva otimistas em voo (temp-),
-          // histórico sintético (mlog-) e mensagens antigas além das 100.
+          // histórico sintético (ml-/mi-) e mensagens antigas além das 100.
           const localOnly = prev.filter(
             (m) =>
               !serverIds.has(m.id) &&
@@ -760,9 +760,10 @@ function renderTextBody(msg: Message): string {
     return text ?? '[mensagem vazia]'
   }
   if (msg.type === 'template') {
-    // Disparos de régua (chat_cadence_history) trazem o corpo do template
-    // resolvido de template_inventory em body_text — variáveis ficam como
-    // {{n}} (os valores reais só existem no n8n). Sem corpo, cai no nome.
+    // Disparos do motor (chat_motor_history) trazem o corpo do template
+    // já RENDERIZADO (message_log.mensagem_texto) em body_text; no fallback
+    // raro via template_inventory as variáveis ficam como {{n}}. Sem corpo,
+    // cai no nome.
     const body = payload.body_text
     if (typeof body === 'string' && body.length > 0) return body
     const tpl = payload.template as { name?: string } | undefined
