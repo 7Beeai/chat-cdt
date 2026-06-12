@@ -68,3 +68,39 @@ P2 (estratégico):
 perder casos legítimos.** Os ~50–60% que precisam de humano de verdade
 continuam — o gargalo restante é capacidade operacional (973 abertas, 2% de
 resolução real).
+
+---
+
+## ADENDO 2026-06-12 (noite) — causa raiz REAL do cancelamento e patch aplicado
+
+Verificação pós-relatório: os fixes de prompt anti-handoff de cancelamento
+(commits cpt-ibirite 41fa956 em 08/06 e 303c671 em 09/06) **não estancaram** —
+desde 10/06, de 199 pedidos explícitos de cancelar, 148 ficaram no AI (74%)
+mas 50 ainda viraram fila (39 other_support + 11 cancel).
+
+Lendo as conversas pós-fix: a IA responde o TEXTO certo ("cancelamento não é
+feito por aqui" + telefone da unidade) e **chama a ferramenta de transferência
+mesmo assim**. Causa: contradição prompt × tool description nos workflows n8n:
+
+- relacionamento `transferir_para_atendente`: "Use quando o assunto for
+  OPERACIONAL ou SENSIVEL fora do seu alcance: **cancelar**/renegociar, ..."
+- cobrança `agent_transfer_human`: "Use SOMENTE com sinal CLARO de um destes
+  3 casos: **reason='cancel' (pessoa quer CANCELAR o plano/assinatura)**; ..."
+
+O modelo pesa a tool description na decisão de chamar ferramenta — ela dizia
+o OPOSTO do prompt. As tools nunca foram atualizadas quando a política mudou
+pra "cancelar → telefone, nunca handoff".
+
+**Patch aplicado em 2026-06-12 ~20:50 UTC** (script
+`n8n/scripts/patch_tooldesc_cancel.py`, backups em
+`n8n/backups-pre-tooldesc-cancel/`): removido "cancelar" dos gatilhos e
+adicionado "NUNCA use para pedido de cancelamento" nas duas tools, nos 28
+workflows ativos (14 relacionamento + 14 cobrança). Só o campo
+toolDescription mudou; execuções pós-patch verificadas ok.
+
+Nota técnica: o PUT da API pública do n8n rejeita chaves extras em settings
+(binaryMode/callerPolicy/availableInMCP/timeSavedMode foram dropadas — todas
+com valor = default; originais preservados nos backups).
+
+**Acompanhar**: % de pedidos de cancelar que viram fila deve cair de ~26%
+pra ~0. Query de controle no repo (cpt-ibirite), comparar com baseline.
