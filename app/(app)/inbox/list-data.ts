@@ -173,19 +173,31 @@ export function sortItems(
   })
 }
 
+/** lowercase + sem acentos, pra "joao" achar "João". */
+function fold(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+}
+
 /** Free-text search over name, phone digits, and unit name/code. */
 export function matchesSearch(
   item: ConversationListItem,
   query: string,
 ): boolean {
-  const q = query.trim().toLowerCase()
+  const q = fold(query.trim())
   if (!q) return true
-  const name = item.contact?.name?.toLowerCase() ?? ''
+  const name = fold(item.contact?.name ?? '')
   const phone = item.contact?.wa_id ?? ''
-  const unit = `${item.unit?.name ?? ''} ${item.unit?.code ?? ''}`.toLowerCase()
+  const unit = fold(`${item.unit?.name ?? ''} ${item.unit?.code ?? ''}`)
+  // Telefone só entra na comparação se a query TEM dígitos: query sem dígito
+  // vira '' e `phone.includes('')` é true pra toda linha — era isso que fazia
+  // a busca por nome "não buscar nada" (nenhuma linha era filtrada).
+  const digits = q.replace(/\D/g, '')
   return (
     name.includes(q) ||
-    phone.includes(q.replace(/\D/g, '')) ||
+    (digits.length > 0 && phone.includes(digits)) ||
     unit.includes(q)
   )
 }
