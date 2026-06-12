@@ -103,7 +103,13 @@ export async function POST(req: NextRequest) {
   if (body.type === 'text') {
     graphBody.text = { body: body.text, preview_url: false }
   } else if (body.type === 'template') {
-    graphBody.template = body.template
+    // Cloud API exige language como OBJETO {code} — string viola o schema
+    // ("violated JSON schema constraint 'type' for template.language").
+    // O client manda string; a conversão fica aqui pra valer pra todo caller.
+    graphBody.template = {
+      ...body.template,
+      language: { code: body.template!.language },
+    }
   } else if (body.type === 'image') {
     graphBody.image = { link: body.mediaUrl, caption: body.caption }
   } else if (body.type === 'document') {
