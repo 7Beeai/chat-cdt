@@ -68,6 +68,24 @@ function resolveBody(row: InventoryRow): string | null {
   return null
 }
 
+type MetaComponents = Array<{
+  type?: string
+  text?: string
+  buttons?: Array<{ type?: string; text?: string }>
+}>
+
+/** Textos dos quick replies do componente BUTTONS (pra UI da bolha). */
+function resolveButtons(components: unknown): string[] {
+  const comps = components as MetaComponents | null
+  if (!Array.isArray(comps)) return []
+  const btns = comps.find(
+    (c) => typeof c?.type === 'string' && c.type.toUpperCase() === 'BUTTONS',
+  )
+  return (btns?.buttons ?? [])
+    .map((b) => b?.text)
+    .filter((t): t is string => typeof t === 'string' && t.length > 0)
+}
+
 export async function GET(req: NextRequest) {
   const supabase = await createClient()
   const {
@@ -126,6 +144,7 @@ export async function GET(req: NextRequest) {
         title,
         template_name: match?.template_name ?? null,
         body: match ? resolveBody(match) : null,
+        buttons: match ? resolveButtons(match.components) : [],
       }
     })
 
@@ -149,6 +168,7 @@ export async function GET(req: NextRequest) {
             (c) => typeof c?.type === 'string' && c.type.toUpperCase() === 'BODY',
           )
           if (body?.text) o.body = body.text
+          if (o.buttons.length === 0) o.buttons = resolveButtons(meta?.components)
         }
       } catch (err) {
         console.error('[api/templates] graph body fallback failed', err)

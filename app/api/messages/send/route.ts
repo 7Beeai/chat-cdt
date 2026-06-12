@@ -17,6 +17,11 @@ const bodySchema = z
         name: z.string(),
         language: z.string().default('pt_BR'),
         components: z.array(z.any()).optional(),
+        // Display-only: corpo resolvido (variáveis preenchidas) e textos dos
+        // quick replies. NÃO vão pra Meta — ficam no payload persistido pra
+        // bolha renderizar o template como no WhatsApp.
+        body_text: z.string().max(4096).optional(),
+        buttons: z.array(z.string().max(64)).max(5).optional(),
       })
       .optional(),
     mediaUrl: z.string().url().optional(),
@@ -106,9 +111,11 @@ export async function POST(req: NextRequest) {
     // Cloud API exige language como OBJETO {code} — string viola o schema
     // ("violated JSON schema constraint 'type' for template.language").
     // O client manda string; a conversão fica aqui pra valer pra todo caller.
+    // body_text/buttons são display-only e NÃO entram no payload da Meta.
+    const { body_text: _bt, buttons: _btns, ...tpl } = body.template!
     graphBody.template = {
-      ...body.template,
-      language: { code: body.template!.language },
+      ...tpl,
+      language: { code: tpl.language },
     }
   } else if (body.type === 'image') {
     graphBody.image = { link: body.mediaUrl, caption: body.caption }
@@ -141,7 +148,21 @@ export async function POST(req: NextRequest) {
     wa_message_id: result.waMessageId,
     direction: 'out' as const,
     type: body.type,
-    payload: graphBody,
+    // Template: anexa corpo resolvido + quick replies ao payload persistido —
+    // a bolha renderiza o texto real em vez de "[template: nome]".
+    payload:
+      body.type === 'template' &&
+      (body.template?.body_text || body.template?.buttons?.length)
+        ? {
+            ...graphBody,
+            ...(body.template.body_text
+              ? { body_text: body.template.body_text }
+              : {}),
+            ...(body.template.buttons?.length
+              ? { template_buttons: body.template.buttons }
+              : {}),
+          }
+        : graphBody,
     sent_by: 'operator' as const,
     operator_id: user.id,
     status: 'sent' as const,

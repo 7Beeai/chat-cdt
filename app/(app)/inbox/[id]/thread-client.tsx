@@ -11,6 +11,7 @@ import {
   Check,
   CheckCheck,
   Clock,
+  Reply,
   TriangleAlert,
   Sparkles,
   UserRound,
@@ -688,6 +689,19 @@ function Bubble({
               )}
             </span>
           )}
+
+          {/* Quick replies do template, como o cliente vê no WhatsApp:
+              divisória + linhas centradas. Somente exibição. */}
+          {!isMedia &&
+            extractTemplateButtons(msg).map((label) => (
+              <div
+                key={label}
+                className="-mx-3.5 mt-2 flex items-center justify-center gap-1.5 border-t border-border/50 px-3.5 pt-2 text-[13.5px] font-medium text-sky-400"
+              >
+                <Reply className="size-3.5" />
+                {label}
+              </div>
+            ))}
         </div>
       </div>
 
@@ -774,6 +788,15 @@ function renderTextBody(msg: Message): string {
     )
   }
   return `[${msg.type}]`
+}
+
+/** Quick replies persistidos no payload do template (display-only). */
+function extractTemplateButtons(msg: Message): string[] {
+  if (msg.type !== 'template') return []
+  const btns = (msg.payload as Record<string, unknown> | null)?.template_buttons
+  return Array.isArray(btns)
+    ? btns.filter((b): b is string => typeof b === 'string' && b.length > 0)
+    : []
 }
 
 function extractCaption(msg: Message): string | null {

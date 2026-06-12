@@ -36,6 +36,7 @@ type ReopenOption = {
   title: string
   template_name: string | null
   body: string | null
+  buttons: string[]
 }
 
 export function TemplatePicker({
@@ -117,6 +118,12 @@ export function TemplatePicker({
               name: opt.template_name,
               language: 'pt_BR',
               components,
+              // Display-only: a rota persiste no payload pra bolha mostrar o
+              // texto real do template (como no WhatsApp), não o nome.
+              ...(opt.body
+                ? { body_text: fillFirstName(opt.body, contactFirstName) }
+                : {}),
+              ...(opt.buttons.length ? { buttons: opt.buttons } : {}),
             },
           }),
         })
@@ -194,9 +201,19 @@ export function TemplatePicker({
                     </span>
                   </div>
                   {opt.body && (
-                    <p className="rounded-lg border border-border/60 bg-secondary/40 px-3 py-2 text-xs whitespace-pre-wrap text-muted-foreground">
-                      {fillFirstName(opt.body, contactFirstName)}
-                    </p>
+                    <div className="rounded-lg border border-border/60 bg-secondary/40 px-3 py-2">
+                      <p className="text-xs whitespace-pre-wrap text-muted-foreground">
+                        {fillFirstName(opt.body, contactFirstName)}
+                      </p>
+                      {opt.buttons.map((b) => (
+                        <p
+                          key={b}
+                          className="mt-1.5 border-t border-border/50 pt-1.5 text-center text-xs font-medium text-sky-400"
+                        >
+                          {b}
+                        </p>
+                      ))}
+                    </div>
                   )}
                   <Button
                     type="button"
