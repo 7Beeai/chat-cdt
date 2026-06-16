@@ -56,14 +56,22 @@ export default async function AppLayout({
   // Admin gate for the "Usuários" nav link (role-based via chat_is_admin()).
   const isAdmin = await getIsAdmin(supabase)
 
-  // Lightweight "aguardando" badge for the sidebar nav (RLS-scoped to the
-  // operator's units). Server-rendered; the live count lives in the list.
-  const { count: waitingCount } = await supabase
-    .from('conversations')
-    .select('id', { count: 'exact', head: true })
-    .eq('status', 'open')
-    .in('routing', ['queued', 'human'])
-    .is('assigned_operator_id', null)
+  // Badge "aguardando" do sidebar (RLS-scoped às units do operador).
+  // ANTES: COUNT(count:'exact') direto em conversations — sob a RLS chat_conv_all
+  // isso reavalia chat_user_has_unit() por linha sobre ~23k abertas, custando
+  // ~8s de média (max 179s) e BLOQUEANDO o SSR de cada navegação do operador.
+  // AGORA: RPC chat_inbox_vitals() (SECURITY DEFINER, RLS-scoped, ~8ms) — a MESMA
+  // fonte que a inbox já usa — somando o `waiting` de todas as units.
+  // INVARIANTE: vitals.waiting filtra handoff_reason IS NOT NULL e routing<>'ai';
+  // o COUNT antigo não filtrava handoff_reason. São equivalentes porque toda
+  // conversa open + routing in (queued,human) + sem dono tem handoff_reason (a
+  // inbox só lida com handoffs). Se surgir escalada open sem handoff_reason,
+  // revisar este badge.
+  const { data: vitalsRaw } = await supabase.rpc('chat_inbox_vitals')
+  const waitingCount = ((vitalsRaw ?? []) as { waiting: number }[]).reduce(
+    (sum, v) => sum + (Number(v.waiting) || 0),
+    0,
+  )
 
   return (
     <UnitFilterProvider units={units}>

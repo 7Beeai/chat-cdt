@@ -242,7 +242,7 @@ export function InboxWorkspace({
     const refreshIfVisible = () => {
       if (document.visibilityState === 'visible') router.refresh()
     }
-    const t = setInterval(refreshIfVisible, 60_000)
+    const t = setInterval(refreshIfVisible, 120_000)
     document.addEventListener('visibilitychange', refreshIfVisible)
     return () => {
       clearInterval(t)
