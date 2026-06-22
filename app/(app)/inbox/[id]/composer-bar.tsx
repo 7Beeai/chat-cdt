@@ -17,6 +17,7 @@ import {
   LayoutTemplate,
   Loader2,
   Lock,
+  Mic,
   Paperclip,
   SendHorizontal,
   UserCheck,
@@ -29,8 +30,10 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 
+import { AudioRecorderBar } from './audio-recorder-bar'
 import type { Message } from './page'
 import { TemplatePicker } from './template-picker'
+import { useAudioRecorder } from './use-audio-recorder'
 
 type Props = {
   conversationId: string
@@ -109,6 +112,16 @@ export function ComposerBar({
   const [pickerOpen, setPickerOpen] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const {
+    state: recState,
+    isActive: recActive,
+    elapsedMs: recElapsedMs,
+    recording: recRecording,
+    errorMsg: recErrorMsg,
+    start: recStart,
+    stop: recStop,
+    reset: recReset,
+  } = useAudioRecorder()
 
   const onPickFile = useCallback((picked: File | null) => {
     if (!picked) return
@@ -262,6 +275,24 @@ export function ComposerBar({
       onOptimisticMediaResolved,
     ],
   )
+
+  // Preview aprovado → manda o áudio gravado pelo MESMO caminho de mídia.
+  // sendMedia já trata kind 'audio' (sem caption, otimismo + resolução); aqui
+  // só convertemos a gravação num File e limpamos o gravador ao concluir.
+  const sendRecording = useCallback(async () => {
+    if (!recRecording || sending) return
+    await sendMedia(recRecording.file, '')
+    recReset()
+  }, [recRecording, sending, sendMedia, recReset])
+
+  // Erros do gravador (permissão negada, sem mic, navegador sem suporte) →
+  // toast e volta pra idle. Guard por state==='error' evita repetir o toast.
+  useEffect(() => {
+    if (recState === 'error' && recErrorMsg) {
+      toast.error(recErrorMsg)
+      recReset()
+    }
+  }, [recState, recErrorMsg, recReset])
 
   const onSubmit = useCallback(
     async (e?: FormEvent) => {
@@ -459,6 +490,18 @@ export function ComposerBar({
           </div>
         )}
 
+        {recActive ? (
+          <AudioRecorderBar
+            state={recState}
+            elapsedMs={recElapsedMs}
+            recording={recRecording}
+            sending={sending}
+            onStop={recStop}
+            onCancel={recReset}
+            onReRecord={() => void recStart()}
+            onSend={() => void sendRecording()}
+          />
+        ) : (
         <div
           className={cn(
             'group relative flex items-end gap-2 rounded-2xl border border-border bg-secondary/40 px-2 py-1.5 transition-colors',
@@ -510,6 +553,22 @@ export function ComposerBar({
             <LayoutTemplate />
           </Button>
 
+          {/* Gravar áudio — a barra de gravação assume o composer ao iniciar */}
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            disabled={!insideWindow || sending || file !== null}
+            onClick={() => void recStart()}
+            className="mb-1 shrink-0 text-muted-foreground/80 hover:text-foreground"
+            title={
+              insideWindow ? 'Gravar áudio' : 'Áudio só dentro da janela de 24h'
+            }
+            aria-label="Gravar áudio"
+          >
+            <Mic />
+          </Button>
+
           <Textarea
             ref={textareaRef}
             value={text}
@@ -558,6 +617,7 @@ export function ComposerBar({
             )}
           </Button>
         </div>
+        )}
 
         {/* Footer calmo persistente: janela Meta (esq) + atalhos (dir) */}
         <div className="mt-1.5 flex items-center justify-between gap-3 px-2 font-mono text-[9.5px] uppercase tracking-[0.08em] text-muted-foreground">

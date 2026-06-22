@@ -17,6 +17,9 @@
 /.next/
 /out/
 
+# opus-recorder worker (copiado de node_modules pelo script de build)
+/public/opus/
+
 # production
 /build
 

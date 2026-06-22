@@ -16,6 +16,9 @@ const PUBLIC_PATHS = [
 function isPublic(pathname: string) {
   if (PUBLIC_PATHS.includes(pathname)) return true
   if (pathname.startsWith('/_next')) return true
+  // Worker do encoder Ogg/Opus (gravação de áudio) — lib vendorada, sem dado
+  // sensível. Liberar evita que o fetch do Worker caia no redirect pro /login.
+  if (pathname.startsWith('/opus/')) return true
   if (pathname.startsWith('/api/meta/')) return true
   // Endpoints internos (push/notify, media/backfill, cron/*) têm auth via
   // CRON_SECRET header — não pelo cookie do usuário. Deixa passar.
