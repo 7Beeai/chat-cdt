@@ -37,8 +37,12 @@ export type AudioRecording = {
 
 // Worker do encoder, servido da mesma origem (copiado pra public/opus/).
 const ENCODER_PATH = '/opus/encoderWorker.min.js'
-// Teto de sanidade: 16MB da Meta dão ~1h de opus, mas voz de cobrança é curta.
-const MAX_DURATION_MS = 5 * 60 * 1000
+// Bitrate do opus (voz). 16kbps mono é nítido pra fala e mantém o arquivo
+// pequeno — a Meta só mostra a onda da mensagem de voz se o áudio for ≤512KB.
+const ENCODER_BITRATE = 16000
+// Teto de duração: a 16kbps, 4min ≈ 470KB (< 512KB), então a bolha de voz
+// renderiza com play/onda em vez de virar ícone de download.
+const MAX_DURATION_MS = 4 * 60 * 1000
 
 function permissionMessage(err: unknown): string {
   const name = err instanceof Error ? err.name : ''
@@ -133,6 +137,7 @@ export function useAudioRecorder() {
       const rec = new Recorder({
         encoderPath: ENCODER_PATH,
         encoderApplication: 2048, // voz (VOIP)
+        encoderBitRate: ENCODER_BITRATE,
         numberOfChannels: 1, // mono
         encoderSampleRate: 48000,
         streamPages: false, // ondataavailable uma vez, com o arquivo completo

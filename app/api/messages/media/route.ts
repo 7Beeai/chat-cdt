@@ -78,6 +78,7 @@ export async function POST(req: NextRequest) {
   const file = form.get('file')
   const conversationId = form.get('conversationId')
   const captionRaw = form.get('caption')
+  const voiceRaw = form.get('voice')
 
   if (!(file instanceof File) || typeof conversationId !== 'string') {
     return NextResponse.json({ error: 'invalid_body' }, { status: 400 })
@@ -86,6 +87,10 @@ export async function POST(req: NextRequest) {
     typeof captionRaw === 'string' && captionRaw.trim().length > 0
       ? captionRaw.trim().slice(0, 1024)
       : undefined
+  // Marca de mensagem de voz (PTT). Só faz sentido pra áudio gravado: com
+  // voice=true a Meta renderiza como mensagem de voz (onda + avatar) em vez de
+  // arquivo. Sem isso, ogg/opus chega como anexo de áudio.
+  const isVoice = voiceRaw === 'true' || voiceRaw === '1'
 
   const mime = file.type
   const kind = kindOf(mime)
@@ -156,6 +161,7 @@ export async function POST(req: NextRequest) {
   const mediaObj: Record<string, unknown> = { id: up.mediaId }
   if (caption && kind !== 'audio') mediaObj.caption = caption
   if (kind === 'document' && file.name) mediaObj.filename = file.name
+  if (kind === 'audio' && isVoice) mediaObj.voice = true
 
   const graphBody = {
     messaging_product: 'whatsapp',
@@ -204,6 +210,7 @@ export async function POST(req: NextRequest) {
         mime_type: mime,
         ...(caption && kind !== 'audio' ? { caption } : {}),
         ...(file.name ? { filename: file.name } : {}),
+        ...(kind === 'audio' && isVoice ? { voice: true } : {}),
         ...(storagePath ? { storage_path: storagePath } : {}),
       },
     },

@@ -166,8 +166,9 @@ export function ComposerBar({
   const showCounter = charsLeft < 300 // só perto do limite
 
   const sendMedia = useCallback(
-    async (picked: File, caption: string) => {
+    async (picked: File, caption: string, opts?: { voice?: boolean }) => {
       const kind = mediaKindOf(picked.type)
+      const isVoice = kind === 'audio' && opts?.voice === true
       const tempId = `temp-${crypto.randomUUID()}`
       const optimistic: Message = {
         id: tempId,
@@ -181,6 +182,7 @@ export function ComposerBar({
           [kind]: {
             ...(caption && kind !== 'audio' ? { caption } : {}),
             ...(picked.name ? { filename: picked.name } : {}),
+            ...(isVoice ? { voice: true } : {}),
             mime_type: picked.type,
           },
         },
@@ -201,6 +203,7 @@ export function ComposerBar({
         fd.append('file', picked)
         fd.append('conversationId', conversationId)
         if (caption) fd.append('caption', caption)
+        if (isVoice) fd.append('voice', 'true')
 
         const r = await fetch('/api/messages/media', {
           method: 'POST',
@@ -281,7 +284,8 @@ export function ComposerBar({
   // só convertemos a gravação num File e limpamos o gravador ao concluir.
   const sendRecording = useCallback(async () => {
     if (!recRecording || sending) return
-    await sendMedia(recRecording.file, '')
+    // voice:true → a Meta renderiza como mensagem de voz (PTT), não arquivo.
+    await sendMedia(recRecording.file, '', { voice: true })
     recReset()
   }, [recRecording, sending, sendMedia, recReset])
 
