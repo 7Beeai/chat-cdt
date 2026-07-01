@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   Bot,
   Clock3,
+  CreditCard,
   Inbox,
   Lightbulb,
   MessageSquare,
@@ -12,7 +13,11 @@ import {
 } from 'lucide-react'
 
 import { HANDOFF_LABEL, type HandoffReason } from '@/app/(app)/inbox/list-data'
-import { CLOSE_OUTCOME_LABEL, type CloseOutcome } from '@/app/(app)/inbox/outcomes'
+import {
+  CLOSE_OUTCOME_LABEL,
+  CLOSE_PAYMENT_METHODS,
+  type CloseOutcome,
+} from '@/app/(app)/inbox/outcomes'
 import { useUnitFilter, unitShortName } from '@/components/inbox/unit-filter'
 import { createClient } from '@/lib/supabase/client'
 import { unitColor } from '@/lib/unit-colors'
@@ -73,14 +78,48 @@ type Attendance = {
     resolution_rate: number
     avg_handle_sec: number
   }[]
+  // Opcional: a RPC 0012 (antes da migration 0024) não manda esta chave. Como
+  // migration e deploy de frontend são independentes (push ≠ apply na
+  // Supabase), o frontend pode subir antes da migration rodar — sem isto
+  // como opcional o TS já ia mascarar o acesso indevido, mas o RUNTIME
+  // (JSON de verdade vindo da RPC antiga) pode chegar sem a chave.
+  reregistrations?: {
+    yes: number
+    no: number
+    resolved_total: number
+    by_unit: { unit_id: string; unit_name: string; yes: number }[]
+    by_method: { method: string; count: number }[]
+  }
 }
 
-type Period = 'today' | '7d' | '30d'
+/**
+ * Shape seguro de `reregistrations`, usado em todo lugar que lê a métrica.
+ * Se a RPC ainda não tiver sido migrada (0024 não aplicada), `attendance`
+ * chega sem esta chave — aqui ela degrada pra zeros/vazio em vez de deixar
+ * `undefined` estourar `TypeError` e derrubar a tela de Relatórios inteira.
+ */
+const EMPTY_REREGISTRATIONS: NonNullable<Attendance['reregistrations']> = {
+  yes: 0,
+  no: 0,
+  resolved_total: 0,
+  by_unit: [],
+  by_method: [],
+}
+
+function reregistrationsOf(
+  attendance: Attendance,
+): NonNullable<Attendance['reregistrations']> {
+  return attendance.reregistrations ?? EMPTY_REREGISTRATIONS
+}
+
+type Period = 'today' | '7d' | '30d' | 'this_month' | 'last_month'
 
 const PERIODS: { value: Period; label: string }[] = [
   { value: 'today', label: 'Hoje' },
   { value: '7d', label: '7 dias' },
   { value: '30d', label: '30 dias' },
+  { value: 'this_month', label: 'Mês atual' },
+  { value: 'last_month', label: 'Mês passado' },
 ]
 
 const REASON_COLOR: Record<HandoffReason, string> = {
@@ -89,7 +128,47 @@ const REASON_COLOR: Record<HandoffReason, string> = {
   other_support: '#fbbf24',
 }
 
+/**
+ * Builds a calendar-month range explicitly in America/Sao_Paulo (-03:00),
+ * regardless of the browser's local timezone. The backend RPCs bucket by
+ * this same offset — using UTC or the browser's local time here would leak
+ * up to ±3h across the month boundary and silently pull rows from the
+ * neighboring month.
+ *
+ * NOTE: -03:00 is a fixed offset (Brazil no longer observes DST), matching
+ * the fixed 'America/Sao_Paulo' usage baked into the 0012/0024 RPCs.
+ */
+function monthRangeSaoPaulo(monthsAgo: number): { from: string; to: string } {
+  const now = new Date()
+  // Convert "now" to its America/Sao_Paulo calendar date via Intl, independent
+  // of the browser's own timezone.
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit',
+  }).formatToParts(now)
+  const year = Number(parts.find((p) => p.type === 'year')?.value)
+  const month = Number(parts.find((p) => p.type === 'month')?.value) // 1-12
+
+  // Target month index (0-based), shifted back by monthsAgo, handling
+  // year rollover (e.g. "last month" in January -> December of last year).
+  const totalMonths = (year * 12 + (month - 1)) - monthsAgo
+  const targetYear = Math.floor(totalMonths / 12)
+  const targetMonth = (totalMonths % 12) + 1 // 1-12
+
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const nextTotal = totalMonths + 1
+  const nextYear = Math.floor(nextTotal / 12)
+  const nextMonth = (nextTotal % 12) + 1
+
+  const from = `${targetYear}-${pad(targetMonth)}-01T00:00:00-03:00`
+  const to = `${nextYear}-${pad(nextMonth)}-01T00:00:00-03:00`
+  return { from: new Date(from).toISOString(), to: new Date(to).toISOString() }
+}
+
 function rangeOf(period: Period): { from: string; to: string } {
+  if (period === 'this_month') return monthRangeSaoPaulo(0)
+  if (period === 'last_month') return monthRangeSaoPaulo(1)
   const to = new Date()
   const from = new Date(to)
   if (period === 'today') from.setHours(0, 0, 0, 0)
@@ -195,7 +274,7 @@ export function ReportsDashboard() {
           <DashboardSkeleton />
         ) : (
           <div className="mx-auto flex max-w-[1200px] flex-col gap-4">
-            <KpiRow overview={overview} />
+            <KpiRow overview={overview} attendance={attendance} />
 
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
               <DeflectionPanel overview={overview} />
@@ -214,6 +293,11 @@ export function ReportsDashboard() {
               <OutcomePanel attendance={attendance} />
             </div>
 
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <ReregistrationsByUnitPanel attendance={attendance} />
+              <ReregistrationsByMethodPanel attendance={attendance} />
+            </div>
+
             <OperatorsPanel attendance={attendance} />
           </div>
         )}
@@ -225,13 +309,19 @@ export function ReportsDashboard() {
 // ---------------------------------------------------------------------------
 // KPI row
 // ---------------------------------------------------------------------------
-function KpiRow({ overview }: { overview: Overview }) {
+function KpiRow({
+  overview,
+  attendance,
+}: {
+  overview: Overview
+  attendance: Attendance
+}) {
   const k = overview.kpis
   const convDelta = deltaPct(k.conversations, overview.prev.conversations)
   const handoffDelta = deltaPct(k.handoffs, overview.prev.handoffs)
 
   return (
-    <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-6">
       <Stat
         label="Conversas"
         value={fmtInt(k.conversations)}
@@ -267,6 +357,12 @@ function KpiRow({ overview }: { overview: Overview }) {
         value={fmtInt(k.messages)}
         icon={<MessageSquare className="size-3.5" />}
         hint="no período"
+      />
+      <Stat
+        label="Recadastros de pagamento"
+        value={fmtInt(reregistrationsOf(attendance).yes)}
+        icon={<CreditCard className="size-3.5" />}
+        hint="cartões recadastrados no chat"
       />
     </div>
   )
@@ -517,6 +613,57 @@ function OutcomePanel({ attendance }: { attendance: Attendance }) {
         <EmptyState>
           Popula conforme a equipe encerra atendimentos com desfecho.
         </EmptyState>
+      )}
+    </Panel>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Reregistrations (recadastro de forma de pagamento) by unit / by method
+// ---------------------------------------------------------------------------
+const PAYMENT_METHOD_LABEL: Record<string, string> = Object.fromEntries(
+  CLOSE_PAYMENT_METHODS.map((m) => [m.value, m.label]),
+)
+
+function ReregistrationsByUnitPanel({ attendance }: { attendance: Attendance }) {
+  const rows = reregistrationsOf(attendance).by_unit.map((u) => ({
+    key: u.unit_id,
+    label: u.unit_name,
+    value: u.yes,
+    color: unitColor(u.unit_id).solid,
+  }))
+
+  return (
+    <Panel
+      title="Recadastros por unidade"
+      subtitle="Cartões recadastrados via chat, por unidade"
+    >
+      {rows.length > 0 ? (
+        <BarList rows={rows} />
+      ) : (
+        <EmptyState>Nenhum recadastro no período.</EmptyState>
+      )}
+    </Panel>
+  )
+}
+
+function ReregistrationsByMethodPanel({ attendance }: { attendance: Attendance }) {
+  const rows = reregistrationsOf(attendance).by_method.map((m) => ({
+    key: m.method,
+    label: PAYMENT_METHOD_LABEL[m.method] ?? m.method,
+    value: m.count,
+    color: LIME,
+  }))
+
+  return (
+    <Panel
+      title="Recadastros por forma de pagamento"
+      subtitle="Forma escolhida no recadastro"
+    >
+      {rows.length > 0 ? (
+        <BarList rows={rows} />
+      ) : (
+        <EmptyState>Nenhum recadastro no período.</EmptyState>
       )}
     </Panel>
   )
