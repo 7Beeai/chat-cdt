@@ -116,6 +116,7 @@ export function CloseDialog({
                   if (o.value !== 'resolvido') {
                     setCardReregistered(null)
                     setPaymentMethod(null)
+                    setNoReregisterReason(null)
                   }
                 }}
                 aria-pressed={active}
