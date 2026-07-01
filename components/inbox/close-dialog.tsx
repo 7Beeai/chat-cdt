@@ -6,6 +6,7 @@ import { X } from 'lucide-react'
 import {
   CLOSE_OUTCOMES,
   CLOSE_PAYMENT_METHODS,
+  NO_REREGISTER_REASONS,
   type CloseOutcome,
 } from '@/app/(app)/inbox/outcomes'
 import type { HandoffReason } from '@/app/(app)/inbox/list-data'
@@ -47,16 +48,21 @@ export function CloseDialog({
     note?: string,
     paymentMethod?: string,
     cardReregistered?: boolean,
+    noReregisterReason?: string,
   ) => void
 }) {
   const [outcome, setOutcome] = useState<CloseOutcome | null>(null)
   const [note, setNote] = useState('')
   const [paymentMethod, setPaymentMethod] = useState<string | null>(null)
   const [cardReregistered, setCardReregistered] = useState<boolean | null>(null)
+  const [noReregisterReason, setNoReregisterReason] = useState<string | null>(
+    null,
+  )
 
   // "Recadastro de pagamento" gets a card-specific close flow, revealed in
   // cascade and only when the close is "resolvido":
-  //   Resolvido → toggle "cartão recadastrado?" → (se Sim) forma de pagamento.
+  //   Resolvido → toggle "cartão recadastrado?" → (se Sim) forma de pagamento
+  //                                              → (se Não) motivo do não-recadastro.
   const isCartao = handoffReason === 'payment_re_register'
   const needsCardToggle = isCartao && outcome === 'resolvido'
   const cardMissing = needsCardToggle && cardReregistered === null
@@ -65,11 +71,17 @@ export function CloseDialog({
   const needsPaymentMethod = needsCardToggle && cardReregistered === true
   const paymentMissing = needsPaymentMethod && !paymentMethod
 
+  // Mirror of needsPaymentMethod for the "Não" branch.
+  const needsNoReregisterReason = needsCardToggle && cardReregistered === false
+  const noReregisterReasonMissing =
+    needsNoReregisterReason && !noReregisterReason
+
   function reset() {
     setOutcome(null)
     setNote('')
     setPaymentMethod(null)
     setCardReregistered(null)
+    setNoReregisterReason(null)
   }
 
   return (
@@ -104,6 +116,7 @@ export function CloseDialog({
                   if (o.value !== 'resolvido') {
                     setCardReregistered(null)
                     setPaymentMethod(null)
+                    setNoReregisterReason(null)
                   }
                 }}
                 aria-pressed={active}
@@ -154,6 +167,7 @@ export function CloseDialog({
                     onClick={() => {
                       setCardReregistered(opt.v)
                       if (!opt.v) setPaymentMethod(null)
+                      else setNoReregisterReason(null)
                     }}
                     aria-pressed={active}
                     className={cn(
@@ -200,6 +214,35 @@ export function CloseDialog({
           </div>
         )}
 
+        {needsNoReregisterReason && (
+          <div className="rounded-[10px] border border-accent/30 bg-accent/[0.06] p-2.5">
+            <span className="mb-2 block font-mono text-[9px] font-semibold uppercase tracking-[0.16em] text-accent">
+              Motivo do não-recadastro *
+            </span>
+            <div className="flex flex-wrap gap-1.5">
+              {NO_REREGISTER_REASONS.map((r) => {
+                const active = noReregisterReason === r.value
+                return (
+                  <button
+                    key={r.value}
+                    type="button"
+                    onClick={() => setNoReregisterReason(r.value)}
+                    aria-pressed={active}
+                    className={cn(
+                      'rounded-full border px-2.5 py-1 text-[12px] font-medium transition-colors',
+                      active
+                        ? 'border-accent bg-accent text-accent-foreground'
+                        : 'border-border bg-card hover:border-accent/40 hover:bg-secondary',
+                    )}
+                  >
+                    {r.label}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
         <label className="block">
           <span className="mb-1 block font-mono text-[9px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
             Nota (opcional)
@@ -226,14 +269,24 @@ export function CloseDialog({
               outcome &&
               !paymentMissing &&
               !cardMissing &&
+              !noReregisterReasonMissing &&
               onConfirm(
                 outcome,
                 note,
                 needsPaymentMethod ? (paymentMethod ?? undefined) : undefined,
                 needsCardToggle ? (cardReregistered ?? undefined) : undefined,
+                needsNoReregisterReason
+                  ? (noReregisterReason ?? undefined)
+                  : undefined,
               )
             }
-            disabled={pending || !outcome || paymentMissing || cardMissing}
+            disabled={
+              pending ||
+              !outcome ||
+              paymentMissing ||
+              cardMissing ||
+              noReregisterReasonMissing
+            }
           >
             {pending ? 'Encerrando…' : 'Encerrar'}
           </Button>

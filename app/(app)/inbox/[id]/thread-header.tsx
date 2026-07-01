@@ -108,6 +108,7 @@ export function ThreadHeader({ conv, contextOpen, onToggleContext }: Props) {
     note?: string,
     paymentMethod?: string,
     cardReregistered?: boolean,
+    noReregisterReason?: string,
   ) {
     startTransition(async () => {
       // closeConversation redirects on success; only errors return here.
@@ -117,6 +118,7 @@ export function ThreadHeader({ conv, contextOpen, onToggleContext }: Props) {
         note,
         paymentMethod,
         cardReregistered,
+        noReregisterReason,
       )
       if (r?.error) toast.error(`Encerrar: ${r.error}`)
     })
