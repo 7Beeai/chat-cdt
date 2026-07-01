@@ -78,13 +78,38 @@ type Attendance = {
     resolution_rate: number
     avg_handle_sec: number
   }[]
-  reregistrations: {
+  // Opcional: a RPC 0012 (antes da migration 0024) não manda esta chave. Como
+  // migration e deploy de frontend são independentes (push ≠ apply na
+  // Supabase), o frontend pode subir antes da migration rodar — sem isto
+  // como opcional o TS já ia mascarar o acesso indevido, mas o RUNTIME
+  // (JSON de verdade vindo da RPC antiga) pode chegar sem a chave.
+  reregistrations?: {
     yes: number
     no: number
     resolved_total: number
     by_unit: { unit_id: string; unit_name: string; yes: number }[]
     by_method: { method: string; count: number }[]
   }
+}
+
+/**
+ * Shape seguro de `reregistrations`, usado em todo lugar que lê a métrica.
+ * Se a RPC ainda não tiver sido migrada (0024 não aplicada), `attendance`
+ * chega sem esta chave — aqui ela degrada pra zeros/vazio em vez de deixar
+ * `undefined` estourar `TypeError` e derrubar a tela de Relatórios inteira.
+ */
+const EMPTY_REREGISTRATIONS: NonNullable<Attendance['reregistrations']> = {
+  yes: 0,
+  no: 0,
+  resolved_total: 0,
+  by_unit: [],
+  by_method: [],
+}
+
+function reregistrationsOf(
+  attendance: Attendance,
+): NonNullable<Attendance['reregistrations']> {
+  return attendance.reregistrations ?? EMPTY_REREGISTRATIONS
 }
 
 type Period = 'today' | '7d' | '30d' | 'this_month' | 'last_month'
@@ -335,7 +360,7 @@ function KpiRow({
       />
       <Stat
         label="Recadastros de pagamento"
-        value={fmtInt(attendance.reregistrations.yes)}
+        value={fmtInt(reregistrationsOf(attendance).yes)}
         icon={<CreditCard className="size-3.5" />}
         hint="cartões recadastrados no chat"
       />
@@ -601,7 +626,7 @@ const PAYMENT_METHOD_LABEL: Record<string, string> = Object.fromEntries(
 )
 
 function ReregistrationsByUnitPanel({ attendance }: { attendance: Attendance }) {
-  const rows = attendance.reregistrations.by_unit.map((u) => ({
+  const rows = reregistrationsOf(attendance).by_unit.map((u) => ({
     key: u.unit_id,
     label: u.unit_name,
     value: u.yes,
@@ -623,7 +648,7 @@ function ReregistrationsByUnitPanel({ attendance }: { attendance: Attendance }) 
 }
 
 function ReregistrationsByMethodPanel({ attendance }: { attendance: Attendance }) {
-  const rows = attendance.reregistrations.by_method.map((m) => ({
+  const rows = reregistrationsOf(attendance).by_method.map((m) => ({
     key: m.method,
     label: PAYMENT_METHOD_LABEL[m.method] ?? m.method,
     value: m.count,
