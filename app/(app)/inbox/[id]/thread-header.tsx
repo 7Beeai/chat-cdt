@@ -46,6 +46,7 @@ const HANDOFF_LABEL: Record<string, string> = {
   payment_re_register: 'Recadastro pagamento',
   cancel: 'Cancelamento',
   other_support: 'Suporte',
+  boas_vindas: 'Boas-vindas',
 }
 
 const HANDOFF_TONE: Record<string, string> = {
@@ -53,6 +54,8 @@ const HANDOFF_TONE: Record<string, string> = {
     'bg-sky-500/15 text-sky-400 border border-sky-500/30',
   cancel: 'bg-red-500/15 text-red-400 border border-red-500/30',
   other_support: 'bg-amber-500/15 text-amber-400 border border-amber-500/30',
+  boas_vindas:
+    'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30',
 }
 
 const TWO_HOURS_MS = 2 * 60 * 60 * 1000

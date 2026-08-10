@@ -82,7 +82,12 @@ export type ConversationView = {
   unit_id: string
   status: 'open' | 'snoozed' | 'closed'
   routing: 'ai' | 'queued' | 'human'
-  handoff_reason: 'payment_re_register' | 'cancel' | 'other_support' | null
+  handoff_reason:
+    | 'payment_re_register'
+    | 'cancel'
+    | 'other_support'
+    | 'boas_vindas'
+    | null
   priority: number
   last_inbound_at: string | null
   customer_window_expires_at: string | null

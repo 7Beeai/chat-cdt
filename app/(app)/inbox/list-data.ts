@@ -11,13 +11,21 @@
 
 import type { MessagePreview } from './preview'
 
-export type HandoffReason = 'payment_re_register' | 'other_support' | 'cancel'
+export type HandoffReason =
+  | 'payment_re_register'
+  | 'other_support'
+  | 'cancel'
+  | 'boas_vindas'
 
 /** Canonical, single-source labels for each handoff reason. */
 export const HANDOFF_LABEL: Record<HandoffReason, string> = {
   payment_re_register: 'Recadastro pagamento',
   other_support: 'Suporte',
   cancel: 'Cancelamento',
+  // Venda concluída aguardando a etapa de boas-vindas (validação facial/KYC
+  // manual — fluxo Caraguá). Criado pelo auto-handoff de vendas_registrar_estado
+  // ou pela transferência da Josi (migration 20260810210000 no repo cpt-ibirite).
+  boas_vindas: 'Boas-vindas',
 }
 
 /**

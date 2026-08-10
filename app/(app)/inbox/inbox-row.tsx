@@ -40,6 +40,11 @@ const HANDOFF: Record<
     iconColor: 'text-sky-400',
   },
   other_support: { label: 'Suporte', icon: HelpCircle, iconColor: 'text-amber-400' },
+  boas_vindas: {
+    label: 'Boas-vindas',
+    icon: HeartHandshake,
+    iconColor: 'text-emerald-400',
+  },
 }
 
 const PREVIEW_ICON: Partial<Record<PreviewKind, LucideIcon>> = {

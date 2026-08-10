@@ -513,10 +513,11 @@ export function ThreadClient({
 }
 
 /**
- * Rodapé da Área de Vendas no lugar do composer: a conversa é conduzida pela
- * IA e o fluxo de vendas do n8n NÃO tem gate de routing — se um humano
- * respondesse por aqui, a Josi continuaria respondendo em paralelo. Monitor é
- * somente leitura por design.
+ * Rodapé da Área de Vendas no lugar do composer. Monitor é somente leitura
+ * por design: intervenção humana no trilho de vendas acontece via handoff
+ * (routing='queued', ex.: boas_vindas) e é atendida pela Inbox — desde
+ * 2026-08-10 os workflows de vendas têm o gate ai_may_send, então a Josi
+ * silencia quando a conversa está com humano.
  */
 function MonitorBar({ routing }: { routing: ConversationView['routing'] }) {
   return (

@@ -126,6 +126,7 @@ const REASON_COLOR: Record<HandoffReason, string> = {
   cancel: '#f87171',
   payment_re_register: '#38bdf8',
   other_support: '#fbbf24',
+  boas_vindas: '#34d399',
 }
 
 /**
