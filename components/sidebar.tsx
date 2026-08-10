@@ -11,6 +11,7 @@ import {
   LogOut,
   MessageCircle,
   Shield,
+  Sparkles,
   // UploadCloud,  // tela de import (upload) ainda não funcional
 } from 'lucide-react'
 
@@ -60,6 +61,8 @@ export function Sidebar({
       icon: MessageCircle,
       badge: waitingCount > 0 ? waitingCount : undefined,
     },
+    // Monitor ao vivo das conversas da IA de vendas (Josi) — somente leitura.
+    { href: '/vendas', label: 'Vendas', icon: Sparkles },
     // Desativado — tela de import (upload) ainda não funcional:
     // { href: '/upload', label: 'Importar', icon: UploadCloud },
     // Desativado temporariamente — restaurar quando a tela for retomada:
