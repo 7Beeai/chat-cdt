@@ -112,6 +112,10 @@ type Props = {
   operatorNames?: Record<string, string>
   contextOpen?: boolean
   onToggleContext?: () => void
+  /** Modo Área de Vendas: somente leitura — troca o composer por um aviso. */
+  monitor?: boolean
+  /** Destino do "voltar" mobile (default /inbox). */
+  backHref?: string
 }
 
 export function ThreadClient({
@@ -122,6 +126,8 @@ export function ThreadClient({
   operatorNames = {},
   contextOpen,
   onToggleContext,
+  monitor = false,
+  backHref,
 }: Props) {
   const [messages, setMessages] = useState<Message[]>(initial)
   const [mediaUrls, setMediaUrls] =
@@ -443,6 +449,8 @@ export function ThreadClient({
         conv={conversation}
         contextOpen={contextOpen}
         onToggleContext={onToggleContext}
+        monitor={monitor}
+        backHref={backHref}
       />
 
       <div
@@ -482,20 +490,45 @@ export function ThreadClient({
         </div>
       </div>
 
-      <ComposerBar
-        conversationId={conversation.id}
-        insideWindow={insideWindow}
-        expiresAt={conversation.customer_window_expires_at}
-        wabaId={wabaTextId}
-        userId={userId}
-        contactFirstName={contactFirstName}
-        lockedBy={lockedBy}
-        onTakeOver={handleTakeOver}
-        onOptimisticAppend={appendOptimistic}
-        onOptimisticPatch={patchOptimistic}
-        onOptimisticDrop={removeOptimistic}
-        onOptimisticMediaResolved={resolveOptimisticMedia}
-      />
+      {monitor ? (
+        <MonitorBar routing={conversation.routing} />
+      ) : (
+        <ComposerBar
+          conversationId={conversation.id}
+          insideWindow={insideWindow}
+          expiresAt={conversation.customer_window_expires_at}
+          wabaId={wabaTextId}
+          userId={userId}
+          contactFirstName={contactFirstName}
+          lockedBy={lockedBy}
+          onTakeOver={handleTakeOver}
+          onOptimisticAppend={appendOptimistic}
+          onOptimisticPatch={patchOptimistic}
+          onOptimisticDrop={removeOptimistic}
+          onOptimisticMediaResolved={resolveOptimisticMedia}
+        />
+      )}
+    </div>
+  )
+}
+
+/**
+ * Rodapé da Área de Vendas no lugar do composer: a conversa é conduzida pela
+ * IA e o fluxo de vendas do n8n NÃO tem gate de routing — se um humano
+ * respondesse por aqui, a Josi continuaria respondendo em paralelo. Monitor é
+ * somente leitura por design.
+ */
+function MonitorBar({ routing }: { routing: ConversationView['routing'] }) {
+  return (
+    <div className="shrink-0 border-t border-border bg-card/80 px-4 py-3 backdrop-blur-sm sm:px-[22px]">
+      <div className="mx-auto flex max-w-3xl items-center gap-2.5 text-[12.5px] text-muted-foreground">
+        <Sparkles className="size-4 shrink-0 text-accent" />
+        <span>
+          {routing === 'ai'
+            ? 'Modo monitoramento — a IA de vendas está conduzindo esta conversa ao vivo.'
+            : 'Modo monitoramento — conversa fora do controle da IA (fila humana). Atendimento humano acontece pela Inbox.'}
+        </span>
+      </div>
     </div>
   )
 }

@@ -36,6 +36,10 @@ type Props = {
   conv: ConversationView
   contextOpen?: boolean
   onToggleContext?: () => void
+  /** Modo Área de Vendas: sem ações de posse/encerramento, com chip de status da IA. */
+  monitor?: boolean
+  /** Destino do "voltar" mobile (default /inbox). */
+  backHref?: string
 }
 
 const HANDOFF_LABEL: Record<string, string> = {
@@ -53,7 +57,13 @@ const HANDOFF_TONE: Record<string, string> = {
 
 const TWO_HOURS_MS = 2 * 60 * 60 * 1000
 
-export function ThreadHeader({ conv, contextOpen, onToggleContext }: Props) {
+export function ThreadHeader({
+  conv,
+  contextOpen,
+  onToggleContext,
+  monitor = false,
+  backHref,
+}: Props) {
   const [isPending, startTransition] = useTransition()
   const [closeOpen, setCloseOpen] = useState(false)
   const [, setTick] = useState(0)
@@ -128,8 +138,8 @@ export function ThreadHeader({ conv, contextOpen, onToggleContext }: Props) {
       <Button
         variant="ghost"
         size="icon-sm"
-        render={<Link href="/inbox" />}
-        aria-label="Voltar para a inbox"
+        render={<Link href={backHref ?? '/inbox'} />}
+        aria-label="Voltar para a lista"
         className="shrink-0 lg:hidden"
       >
         <ArrowLeft />
@@ -194,8 +204,36 @@ export function ThreadHeader({ conv, contextOpen, onToggleContext }: Props) {
         <span>{winLabel}</span>
       </div>
 
+      {/* Chip de status no modo monitor (Área de Vendas) */}
+      {monitor && (
+        <span
+          className={cn(
+            'hidden shrink-0 items-center gap-1.5 rounded-full border px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-[0.08em] sm:inline-flex',
+            conv.status === 'closed'
+              ? 'border-border bg-secondary text-muted-foreground'
+              : conv.routing === 'ai'
+                ? 'border-accent/40 bg-accent/12 text-accent'
+                : 'border-amber-500/30 bg-amber-500/12 text-amber-400',
+          )}
+        >
+          {conv.status !== 'closed' && conv.routing === 'ai' && (
+            <span className="live-dot size-[5px] rounded-full bg-accent" />
+          )}
+          {conv.status === 'closed'
+            ? 'Encerrada'
+            : conv.routing === 'ai'
+              ? 'IA ao vivo'
+              : 'Com humano'}
+        </span>
+      )}
+
       {/* Desktop actions */}
-      <div className="hidden shrink-0 items-center gap-1.5 lg:flex">
+      <div
+        className={cn(
+          'hidden shrink-0 items-center gap-1.5',
+          !monitor && 'lg:flex',
+        )}
+      >
         {canAssume && (
           <Button
             size="sm"
@@ -244,7 +282,8 @@ export function ThreadHeader({ conv, contextOpen, onToggleContext }: Props) {
         </Button>
       )}
 
-      {/* Mobile actions → sheet */}
+      {/* Mobile actions → sheet (fora do modo monitor) */}
+      {!monitor && (
       <Sheet>
         <SheetTrigger
           render={
@@ -313,6 +352,7 @@ export function ThreadHeader({ conv, contextOpen, onToggleContext }: Props) {
           </div>
         </SheetContent>
       </Sheet>
+      )}
 
       <CloseDialog
         open={closeOpen}

@@ -47,6 +47,8 @@ export function ThreadPane({
   initialMediaUrls,
   debtor,
   operatorNames,
+  monitor = false,
+  backHref,
 }: {
   initial: Message[]
   conversation: ConversationView
@@ -54,6 +56,10 @@ export function ThreadPane({
   initialMediaUrls: Record<string, MediaState>
   debtor: DebtorContext | null
   operatorNames: Record<string, string>
+  /** Modo Área de Vendas: somente leitura — sem composer nem ações de posse. */
+  monitor?: boolean
+  /** Destino do "voltar" mobile (default /inbox). */
+  backHref?: string
 }) {
   // Default CLOSED (matches SSR); the layout effect restores the stored desktop
   // choice before paint. First access (no stored pref) stays closed. Mobile is
@@ -80,6 +86,8 @@ export function ThreadPane({
         operatorNames={operatorNames}
         contextOpen={contextOpen}
         onToggleContext={() => applyContext(!contextOpen)}
+        monitor={monitor}
+        backHref={backHref}
       />
       {contextOpen && (
         <>
