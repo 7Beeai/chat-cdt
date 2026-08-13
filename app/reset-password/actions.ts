@@ -32,7 +32,16 @@ export async function setNewPassword(formData: FormData): Promise<void> {
   }
 
   const { error } = await supabase.auth.updateUser({ password })
-  if (error) {
+  // 'same_password' = a senha ATUAL já é exatamente esta — ou seja, uma
+  // submissão anterior (ou um POST duplicado da mesma tela) já gravou o que o
+  // usuário pediu. O estado final está certo: seguir como sucesso. Devolver o
+  // erro criava um falso loop — cada tentativa trocava a senha e mesmo assim
+  // mostrava "New password should be different..." (caso Vagner, 2026-08-13).
+  const alreadyApplied =
+    error &&
+    (error.code === 'same_password' ||
+      /different from the old password/i.test(error.message))
+  if (error && !alreadyApplied) {
     redirect(`/reset-password?error=${encodeURIComponent(error.message)}`)
   }
 

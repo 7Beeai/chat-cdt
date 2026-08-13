@@ -3,7 +3,7 @@ import { redirect } from 'next/navigation'
 
 import { signOut } from '@/app/login/actions'
 import { setNewPassword } from '@/app/reset-password/actions'
-import { Button } from '@/components/ui/button'
+import { SubmitButton } from '@/components/ui/submit-button'
 import { HexagonPattern } from '@/components/ui/hexagon-pattern'
 import { Input } from '@/components/ui/input'
 import { createClient } from '@/lib/supabase/server'
@@ -104,9 +104,9 @@ export default async function ResetPasswordPage({
               />
             </div>
 
-            <Button type="submit" className="mt-2 w-full">
+            <SubmitButton className="mt-2 w-full" pendingLabel="Salvando…">
               Salvar e entrar
-            </Button>
+            </SubmitButton>
           </form>
 
           <form action={signOut} className="mt-4 text-center">
