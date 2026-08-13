@@ -11,6 +11,7 @@ import {
   Power,
   Search,
   Shield,
+  Sparkles,
   Trash2,
   TriangleAlert,
   UserPlus,
@@ -22,6 +23,7 @@ import {
   createUserAction,
   deleteUserAction,
   inviteUserAction,
+  setSalesOnlyAction,
   setUserActiveAction,
   setUserUnitsAction,
 } from '@/app/(app)/admin/actions'
@@ -81,6 +83,13 @@ export function UsersManager({
     })
   }
 
+  function toggleSalesOnly(u: AdminUserRow) {
+    startTransition(async () => {
+      const res = await setSalesOnlyAction(u.auth_id, !u.is_sales_agent)
+      res.ok ? toast.success(res.message) : toast.error(res.message)
+    })
+  }
+
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden">
       {/* Header */}
@@ -128,6 +137,7 @@ export function UsersManager({
               busy={pending}
               onEdit={() => setEditing(u)}
               onToggleActive={() => toggleActive(u)}
+              onToggleSalesOnly={() => toggleSalesOnly(u)}
               onDelete={() => setDeleting(u)}
             />
           ))}
@@ -280,6 +290,7 @@ function UserRow({
   busy,
   onEdit,
   onToggleActive,
+  onToggleSalesOnly,
   onDelete,
 }: {
   user: AdminUserRow
@@ -287,6 +298,7 @@ function UserRow({
   busy: boolean
   onEdit: () => void
   onToggleActive: () => void
+  onToggleSalesOnly: () => void
   onDelete: () => void
 }) {
   const label = user.name?.trim() || user.email
@@ -320,6 +332,12 @@ function UserRow({
             <span className="inline-flex items-center gap-1 rounded-full border border-accent/30 bg-accent/10 px-1.5 py-0.5 font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-accent">
               <Shield className="size-2.5" />
               Admin
+            </span>
+          )}
+          {user.is_sales_agent && !user.is_admin && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-accent/30 bg-accent/10 px-1.5 py-0.5 font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-accent">
+              <Sparkles className="size-2.5" />
+              Vendas
             </span>
           )}
           {disabled && (
@@ -372,7 +390,9 @@ function UserRow({
       <RowActions
         disabled={disabled}
         busy={busy}
+        salesOnly={user.is_sales_agent}
         onToggleActive={onToggleActive}
+        onToggleSalesOnly={onToggleSalesOnly}
         onDelete={onDelete}
       />
     </div>
@@ -385,12 +405,16 @@ function UserRow({
 function RowActions({
   disabled,
   busy,
+  salesOnly,
   onToggleActive,
+  onToggleSalesOnly,
   onDelete,
 }: {
   disabled: boolean
   busy: boolean
+  salesOnly: boolean
   onToggleActive: () => void
+  onToggleSalesOnly: () => void
   onDelete: () => void
 }) {
   const [open, setOpen] = useState(false)
@@ -435,6 +459,15 @@ function RowActions({
             onClick={() => {
               setOpen(false)
               onToggleActive()
+            }}
+          />
+          <MenuItem
+            icon={<Sparkles className="size-3.5" />}
+            label={salesOnly ? 'Acesso completo' : 'Somente vendas'}
+            disabled={busy}
+            onClick={() => {
+              setOpen(false)
+              onToggleSalesOnly()
             }}
           />
           <div className="my-1 h-px bg-border" aria-hidden />

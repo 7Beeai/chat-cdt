@@ -4,6 +4,7 @@ import { AppShell } from '@/components/app-shell'
 import { UnitFilterProvider, type UnitOption } from '@/components/inbox/unit-filter'
 import { Toaster } from '@/components/ui/sonner'
 import { getIsAdmin } from '@/lib/auth/admin'
+import { getIsSalesOnly } from '@/lib/auth/sales'
 import { createClient } from '@/lib/supabase/server'
 
 export default async function AppLayout({
@@ -56,6 +57,10 @@ export default async function AppLayout({
   // Admin gate for the "Usuários" nav link (role-based via chat_is_admin()).
   const isAdmin = await getIsAdmin(supabase)
 
+  // Gate "somente vendas" (role sales_agent, migration 0027): a sidebar só
+  // mostra Vendas; Inbox/Relatórios redirecionam nos próprios layouts.
+  const salesOnly = await getIsSalesOnly(supabase)
+
   // Badge "aguardando" do sidebar (RLS-scoped às units do operador).
   // ANTES: COUNT(count:'exact') direto em conversations — sob a RLS chat_conv_all
   // isso reavalia chat_user_has_unit() por linha sobre ~23k abertas, custando
@@ -67,18 +72,24 @@ export default async function AppLayout({
   // conversa open + routing in (queued,human) + sem dono tem handoff_reason (a
   // inbox só lida com handoffs). Se surgir escalada open sem handoff_reason,
   // revisar este badge.
-  const { data: vitalsRaw } = await supabase.rpc('chat_inbox_vitals')
-  const waitingCount = ((vitalsRaw ?? []) as { waiting: number }[]).reduce(
-    (sum, v) => sum + (Number(v.waiting) || 0),
-    0,
-  )
+  // Somente-vendas não vê a Inbox — nem o badge; pular a RPC economiza a
+  // consulta em toda navegação desses operadores.
+  let waitingCount = 0
+  if (!salesOnly) {
+    const { data: vitalsRaw } = await supabase.rpc('chat_inbox_vitals')
+    waitingCount = ((vitalsRaw ?? []) as { waiting: number }[]).reduce(
+      (sum, v) => sum + (Number(v.waiting) || 0),
+      0,
+    )
+  }
 
   return (
     <UnitFilterProvider units={units}>
       <AppShell
         user={sidebarUser}
-        waitingCount={waitingCount ?? 0}
+        waitingCount={waitingCount}
         isAdmin={isAdmin}
+        salesOnly={salesOnly}
       >
         {children}
       </AppShell>

@@ -249,6 +249,44 @@ export async function setUserActiveAction(
 }
 
 /**
+ * Liga/desliga o acesso "somente vendas" = role 'sales_agent' em user_roles
+ * (user_id = auth.users.id, NÃO profiles.id — o FK oposto ao de user_units).
+ * O gate real é lido pelos layouts via chat_is_sales_only() (migration 0027),
+ * que ignora o role quando o usuário também é admin — então marcar um admin
+ * aqui não tranca ninguém, só fica sem efeito até o admin ser rebaixado.
+ */
+export async function setSalesOnlyAction(
+  authId: string,
+  salesOnly: boolean,
+): Promise<ActionResult> {
+  await requireAdmin()
+
+  const svc = createServiceClient()
+  if (salesOnly) {
+    const { error } = await svc.from('user_roles').upsert(
+      { user_id: authId, role: 'sales_agent' },
+      { onConflict: 'user_id,role', ignoreDuplicates: true },
+    )
+    if (error) return { ok: false, message: error.message }
+  } else {
+    const { error } = await svc
+      .from('user_roles')
+      .delete()
+      .eq('user_id', authId)
+      .eq('role', 'sales_agent')
+    if (error) return { ok: false, message: error.message }
+  }
+
+  revalidatePath('/admin/users')
+  return {
+    ok: true,
+    message: salesOnly
+      ? 'Acesso restrito à área de Vendas.'
+      : 'Acesso completo restaurado.',
+  }
+}
+
+/**
  * Permanently delete a user. CASCADE clears profiles/user_roles/user_units/
  * push subs. BUT auth.users has NO ACTION FKs (conversations, messages,
  * cobrança, pagamentos) that BLOCK deletion once the user has history — we

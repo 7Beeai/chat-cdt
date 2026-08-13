@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation'
 
+import { getIsSalesOnly } from '@/lib/auth/sales'
 import { createClient } from '@/lib/supabase/server'
 import { formatPersonName } from '@/lib/format/name'
 
@@ -28,6 +29,9 @@ export default async function InboxLayout({
     data: { user },
   } = await supabase.auth.getUser()
   if (!user) redirect('/login')
+
+  // Operador "somente vendas" (role sales_agent) não tem Inbox de cobrança.
+  if (await getIsSalesOnly(supabase)) redirect('/vendas')
 
   const selectCols = `
     id, unit_id, status, routing, handoff_reason, priority,

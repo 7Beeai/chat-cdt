@@ -31,11 +31,14 @@ export function AppShell({
   user,
   waitingCount,
   isAdmin,
+  salesOnly = false,
   children,
 }: {
   user: SidebarUser | null
   waitingCount: number
   isAdmin: boolean
+  /** Operador somente-vendas (role sales_agent): sidebar só mostra Vendas. */
+  salesOnly?: boolean
   children: React.ReactNode
 }) {
   const pathname = usePathname()
@@ -91,6 +94,7 @@ export function AppShell({
           user={user}
           waitingCount={waitingCount}
           isAdmin={isAdmin}
+          salesOnly={salesOnly}
           collapsed={collapsed}
           onToggleCollapse={toggleCollapse}
         />
@@ -107,6 +111,7 @@ export function AppShell({
             user={user}
             waitingCount={waitingCount}
             isAdmin={isAdmin}
+            salesOnly={salesOnly}
             onNavigate={() => setMobileNavOpen(false)}
           />
         </SheetContent>

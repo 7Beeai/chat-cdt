@@ -36,6 +36,7 @@ export function Sidebar({
   user,
   waitingCount = 0,
   isAdmin = false,
+  salesOnly = false,
   collapsed = false,
   onToggleCollapse,
   onNavigate,
@@ -43,6 +44,8 @@ export function Sidebar({
   user: SidebarUser | null
   waitingCount?: number
   isAdmin?: boolean
+  /** Operador somente-vendas (role sales_agent): só o link Vendas. */
+  salesOnly?: boolean
   /** Desktop icon-rail mode. Always expanded inside the mobile drawer. */
   collapsed?: boolean
   /** When provided, renders the desktop collapse toggle. */
@@ -54,26 +57,31 @@ export function Sidebar({
   const displayName = user?.name ?? 'Operador'
   const initial = displayName.trim().charAt(0).toUpperCase() || 'O'
 
-  const nav: NavItem[] = [
-    {
-      href: '/inbox',
-      label: 'Inbox',
-      icon: MessageCircle,
-      badge: waitingCount > 0 ? waitingCount : undefined,
-    },
-    // Monitor ao vivo das conversas da IA de vendas (Josi) — somente leitura.
-    { href: '/vendas', label: 'Vendas', icon: Sparkles },
-    // Desativado — tela de import (upload) ainda não funcional:
-    // { href: '/upload', label: 'Importar', icon: UploadCloud },
-    // Desativado temporariamente — restaurar quando a tela for retomada:
-    // { href: '/templates', label: 'Templates', icon: LayoutTemplate },
-    ...(isAdmin
-      ? [{ href: '/admin/users', label: 'Usuários', icon: Shield }]
-      : []),
-    { href: '/reports', label: 'Relatórios', icon: BarChart3 },
-    // Desativado temporariamente — restaurar quando a tela for retomada:
-    // { href: '#filas', label: 'Filas', icon: ListTodo, soon: true },
-  ]
+  // Operador somente-vendas (role sales_agent): a navegação é SÓ Vendas.
+  // Esconder o link é UX — a trava real são os redirects nos layouts de
+  // Inbox/Relatórios (getIsSalesOnly, migration 0027).
+  const nav: NavItem[] = salesOnly
+    ? [{ href: '/vendas', label: 'Vendas', icon: Sparkles }]
+    : [
+        {
+          href: '/inbox',
+          label: 'Inbox',
+          icon: MessageCircle,
+          badge: waitingCount > 0 ? waitingCount : undefined,
+        },
+        // Monitor ao vivo das conversas da IA de vendas (Josi) — somente leitura.
+        { href: '/vendas', label: 'Vendas', icon: Sparkles },
+        // Desativado — tela de import (upload) ainda não funcional:
+        // { href: '/upload', label: 'Importar', icon: UploadCloud },
+        // Desativado temporariamente — restaurar quando a tela for retomada:
+        // { href: '/templates', label: 'Templates', icon: LayoutTemplate },
+        ...(isAdmin
+          ? [{ href: '/admin/users', label: 'Usuários', icon: Shield }]
+          : []),
+        { href: '/reports', label: 'Relatórios', icon: BarChart3 },
+        // Desativado temporariamente — restaurar quando a tela for retomada:
+        // { href: '#filas', label: 'Filas', icon: ListTodo, soon: true },
+      ]
 
   return (
     <aside className="relative flex h-full w-full flex-col overflow-hidden border-r border-border bg-background">

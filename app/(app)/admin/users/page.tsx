@@ -11,6 +11,7 @@ export type AdminUserRow = {
   name: string | null
   is_active: boolean
   is_admin: boolean
+  is_sales_agent: boolean
   unit_ids: string[]
   last_sign_in_at: string | null
   created_at: string | null
