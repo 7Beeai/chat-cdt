@@ -4,16 +4,30 @@ import { sendPush, type PushSubscription } from '@/lib/push'
 
 export const runtime = 'nodejs'
 
+/**
+ * Eventos aceitos:
+ *  - 'handoff'  (default) — conversa entrou na fila "Aguardando" (routing='queued').
+ *                Fanout para TODOS os operadores da unidade (comportamento original).
+ *  - 'assigned' — conversa foi atribuída a um operador (rodízio 0022, devolução
+ *                por SLA 0025 ou reatribuição por terceiro). Push SÓ para o
+ *                operador em `operator_user_id`.
+ *  - 'inbound'  — cliente respondeu numa conversa aberta com dono. Push SÓ para
+ *                o dono, com preview da mensagem.
+ */
 type Body = {
+  event?: 'handoff' | 'assigned' | 'inbound'
   conversation_id: string
   unit_id: string
   reason?: string
+  operator_user_id?: string
+  preview?: string
 }
 
 const REASON_LABEL: Record<string, string> = {
   payment_re_register: 'Recadastro de pagamento',
   cancel: 'Cancelamento de assinatura',
   other_support: 'Suporte específico',
+  boas_vindas: 'Boas-vindas',
 }
 
 export async function POST(req: NextRequest) {
@@ -31,36 +45,47 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'missing_fields' }, { status: 400 })
   }
 
+  const event = body.event ?? 'handoff'
   const supabase = createServiceClient()
 
-  // 1) user_units -> profiles.id list
-  const { data: uu, error: uuErr } = await supabase
-    .from('user_units')
-    .select('user_id')
-    .eq('unit_id', body.unit_id)
-  if (uuErr) {
-    console.error('[push/notify] user_units lookup failed', uuErr)
-    return NextResponse.json({ ok: true, sent: 0, removed: 0 })
-  }
-  const profileIds = (uu ?? []).map((r) => r.user_id as string)
-  if (profileIds.length === 0) {
-    return NextResponse.json({ ok: true, sent: 0, removed: 0 })
-  }
+  // Destinatários: eventos direcionados vão só para o operador alvo;
+  // handoff mantém o fanout por unidade (user_units -> profiles -> subs).
+  let authUserIds: string[]
+  if (event === 'assigned' || event === 'inbound') {
+    if (!body.operator_user_id) {
+      return NextResponse.json({ error: 'missing_operator' }, { status: 400 })
+    }
+    authUserIds = [body.operator_user_id]
+  } else {
+    // 1) user_units -> profiles.id list
+    const { data: uu, error: uuErr } = await supabase
+      .from('user_units')
+      .select('user_id')
+      .eq('unit_id', body.unit_id)
+    if (uuErr) {
+      console.error('[push/notify] user_units lookup failed', uuErr)
+      return NextResponse.json({ ok: true, sent: 0, removed: 0 })
+    }
+    const profileIds = (uu ?? []).map((r) => r.user_id as string)
+    if (profileIds.length === 0) {
+      return NextResponse.json({ ok: true, sent: 0, removed: 0 })
+    }
 
-  // 2) profiles.id -> profiles.user_id (auth.users.id)
-  const { data: profiles, error: pErr } = await supabase
-    .from('profiles')
-    .select('user_id')
-    .in('id', profileIds)
-  if (pErr) {
-    console.error('[push/notify] profiles lookup failed', pErr)
-    return NextResponse.json({ ok: true, sent: 0, removed: 0 })
-  }
-  const authUserIds = (profiles ?? [])
-    .map((p) => p.user_id as string | null)
-    .filter((v): v is string => !!v)
-  if (authUserIds.length === 0) {
-    return NextResponse.json({ ok: true, sent: 0, removed: 0 })
+    // 2) profiles.id -> profiles.user_id (auth.users.id)
+    const { data: profiles, error: pErr } = await supabase
+      .from('profiles')
+      .select('user_id')
+      .in('id', profileIds)
+    if (pErr) {
+      console.error('[push/notify] profiles lookup failed', pErr)
+      return NextResponse.json({ ok: true, sent: 0, removed: 0 })
+    }
+    authUserIds = (profiles ?? [])
+      .map((p) => p.user_id as string | null)
+      .filter((v): v is string => !!v)
+    if (authUserIds.length === 0) {
+      return NextResponse.json({ ok: true, sent: 0, removed: 0 })
+    }
   }
 
   // 3) subscriptions for those users
@@ -73,11 +98,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, sent: 0, removed: 0 })
   }
 
+  const reasonLabel = body.reason ? REASON_LABEL[body.reason] : undefined
+  let title: string
+  let text: string
+  if (event === 'assigned') {
+    title = 'Novo atendimento para você'
+    text = reasonLabel ?? 'Conversa atribuída a você'
+  } else if (event === 'inbound') {
+    title = 'Cliente respondeu'
+    text = body.preview || 'Nova mensagem do cliente'
+  } else {
+    title = 'Novo handoff'
+    text = reasonLabel ?? 'Conversa aguardando atendimento'
+  }
+
   const payload = {
-    title: 'Novo handoff',
-    body:
-      (body.reason && REASON_LABEL[body.reason]) ||
-      'Conversa aguardando atendimento',
+    title,
+    body: text,
     url: `/inbox/${body.conversation_id}`,
     tag: body.conversation_id,
   }
