@@ -3,6 +3,10 @@ import { NextResponse, type NextRequest } from 'next/server'
 
 const PUBLIC_PATHS = [
   '/login',
+  // Recuperação de senha: quem chega aqui não TEM como estar logado (a senha
+  // é justamente a esquecida). /redefinir-senha recebe ?token_hash= do email.
+  '/esqueci-senha',
+  '/redefinir-senha',
   '/api/meta/webhook',
   '/api/health',
   '/manifest.webmanifest',

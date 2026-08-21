@@ -1,4 +1,5 @@
 import Image from 'next/image'
+import Link from 'next/link'
 import { redirect } from 'next/navigation'
 
 import { signIn } from '@/app/login/actions'
@@ -113,6 +114,15 @@ export default async function LoginPage({
             Entrar
           </Button>
         </form>
+
+        <p className="mt-6 text-center text-xs text-muted-foreground">
+          <Link
+            href="/esqueci-senha"
+            className="underline-offset-4 hover:text-foreground hover:underline"
+          >
+            Esqueci minha senha
+          </Link>
+        </p>
         </div>
       </div>
     </>
