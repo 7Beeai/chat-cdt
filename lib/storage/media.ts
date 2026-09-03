@@ -180,6 +180,32 @@ export async function downloadAndStore(
  * pra navegação operacional. Retorna null se o storage_path não existir ou
  * o user não tem permissão (RLS bloqueia).
  */
+/**
+ * Versão em lote: UMA chamada ao storage pra todos os paths da thread (antes
+ * era um round-trip serial por mídia). Devolve path → signedUrl|null.
+ */
+export async function createMediaSignedUrls(
+  supabase: SupabaseClient,
+  storagePaths: string[],
+  expiresInSec = 3600
+): Promise<Map<string, string | null>> {
+  const out = new Map<string, string | null>()
+  const paths = Array.from(new Set(storagePaths))
+  if (paths.length === 0) return out
+  const { data, error } = await supabase.storage
+    .from(MEDIA_BUCKET)
+    .createSignedUrls(paths, expiresInSec)
+  if (error || !data) {
+    for (const p of paths) out.set(p, null)
+    return out
+  }
+  for (const row of data) {
+    if (row.path) out.set(row.path, row.error ? null : (row.signedUrl ?? null))
+  }
+  for (const p of paths) if (!out.has(p)) out.set(p, null)
+  return out
+}
+
 export async function createMediaSignedUrl(
   supabase: SupabaseClient,
   storagePath: string,

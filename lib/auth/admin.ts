@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation'
+import { cache } from 'react'
 
 import { createClient } from '@/lib/supabase/server'
 
@@ -12,7 +13,7 @@ import { createClient } from '@/lib/supabase/server'
  * link is UX, the gate is security. Note the service-role client bypasses RLS
  * entirely, so server actions that touch it MUST call requireAdmin() first.
  */
-export async function getIsAdmin(
+export const getIsAdmin = cache(async function getIsAdmin(
   supabase: Awaited<ReturnType<typeof createClient>>,
 ): Promise<boolean> {
   const { data, error } = await supabase.rpc('chat_is_admin')
@@ -21,7 +22,7 @@ export async function getIsAdmin(
     return false
   }
   return data === true
-}
+})
 
 /**
  * Throws (via redirect) unless the current session is an authenticated admin.

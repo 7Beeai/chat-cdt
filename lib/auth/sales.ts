@@ -1,3 +1,5 @@
+import { cache } from 'react'
+
 import { createClient } from '@/lib/supabase/server'
 
 /**
@@ -13,7 +15,7 @@ import { createClient } from '@/lib/supabase/server'
  * completo (fail-open) de propósito: uma RPC quebrada não pode trancar a
  * operação inteira de cobrança.
  */
-export async function getIsSalesOnly(
+export const getIsSalesOnly = cache(async function getIsSalesOnly(
   supabase: Awaited<ReturnType<typeof createClient>>,
 ): Promise<boolean> {
   const { data, error } = await supabase.rpc('chat_is_sales_only')
@@ -22,4 +24,4 @@ export async function getIsSalesOnly(
     return false
   }
   return data === true
-}
+})

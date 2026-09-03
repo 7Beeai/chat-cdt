@@ -5,6 +5,8 @@ import { UnitFilterProvider, type UnitOption } from '@/components/inbox/unit-fil
 import { Toaster } from '@/components/ui/sonner'
 import { getIsAdmin } from '@/lib/auth/admin'
 import { getIsSalesOnly } from '@/lib/auth/sales'
+import { getSessionUser } from '@/lib/auth/session'
+import { getInboxVitals } from '@/lib/inbox/vitals'
 import { createClient } from '@/lib/supabase/server'
 
 export default async function AppLayout({
@@ -13,20 +15,28 @@ export default async function AppLayout({
   children: React.ReactNode
 }) {
   const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const user = await getSessionUser()
 
   if (!user) {
     redirect('/login')
   }
 
-  // Resolve operator profile via auth.uid() -> profiles.user_id chain.
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('id, name, must_reset_password')
-    .eq('user_id', user.id)
-    .maybeSingle()
+  // Tudo abaixo depende só do user: dispara em PARALELO (antes eram 5 awaits
+  // em série, ~140ms de rede cada — VPS Iowa ↔ Supabase São Paulo). O vitals
+  // entra no mesmo lote (RPC ~10ms) e é cacheado por request pro inbox layout.
+  const [{ data: profile }, unitsRes, isAdmin, salesOnly, vitalsRaw] =
+    await Promise.all([
+      // Resolve operator profile via auth.uid() -> profiles.user_id chain.
+      supabase
+        .from('profiles')
+        .select('id, name, must_reset_password')
+        .eq('user_id', user.id)
+        .maybeSingle(),
+      supabase.rpc('chat_my_units'),
+      getIsAdmin(supabase),
+      getIsSalesOnly(supabase),
+      getInboxVitals(supabase),
+    ])
 
   // 1º login com senha temporária: força a troca antes de usar o sistema.
   // /reset-password fica FORA deste grupo (app), então não há loop.
@@ -46,20 +56,15 @@ export default async function AppLayout({
   // Uses chat_my_units() (SECURITY DEFINER): the pre-existing RLS on
   // user_units compares user_id with auth.uid() but user_id points at
   // profiles.id — a direct select returns empty. See migration 0005.
-  const { data: unitRows, error: unitsError } = await supabase.rpc(
-    'chat_my_units',
-  )
+  const { data: unitRows, error: unitsError } = unitsRes
   if (unitsError) {
     console.error('[app] failed to load units', unitsError)
   }
   const units: UnitOption[] = (unitRows ?? []) as UnitOption[]
 
-  // Admin gate for the "Usuários" nav link (role-based via chat_is_admin()).
-  const isAdmin = await getIsAdmin(supabase)
-
-  // Gate "somente vendas" (role sales_agent, migration 0027): a sidebar só
-  // mostra Vendas; Inbox/Relatórios redirecionam nos próprios layouts.
-  const salesOnly = await getIsSalesOnly(supabase)
+  // isAdmin: gate do link "Usuários" (chat_is_admin()). salesOnly: gate
+  // "somente vendas" (migration 0027) — sidebar só mostra Vendas; Inbox/
+  // Relatórios redirecionam nos próprios layouts.
 
   // Badge "aguardando" do sidebar (RLS-scoped às units do operador).
   // ANTES: COUNT(count:'exact') direto em conversations — sob a RLS chat_conv_all
@@ -72,12 +77,10 @@ export default async function AppLayout({
   // conversa open + routing in (queued,human) + sem dono tem handoff_reason (a
   // inbox só lida com handoffs). Se surgir escalada open sem handoff_reason,
   // revisar este badge.
-  // Somente-vendas não vê a Inbox — nem o badge; pular a RPC economiza a
-  // consulta em toda navegação desses operadores.
+  // Somente-vendas não vê a Inbox — nem o badge.
   let waitingCount = 0
   if (!salesOnly) {
-    const { data: vitalsRaw } = await supabase.rpc('chat_inbox_vitals')
-    waitingCount = ((vitalsRaw ?? []) as { waiting: number }[]).reduce(
+    waitingCount = vitalsRaw.reduce(
       (sum, v) => sum + (Number(v.waiting) || 0),
       0,
     )

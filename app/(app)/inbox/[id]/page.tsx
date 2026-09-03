@@ -1,9 +1,10 @@
 import { notFound, redirect } from 'next/navigation'
 
+import { getSessionUser } from '@/lib/auth/session'
 import { createClient } from '@/lib/supabase/server'
 import { formatPersonName } from '@/lib/format/name'
 import {
-  createMediaSignedUrl,
+  createMediaSignedUrls,
   extractMediaInfo,
 } from '@/lib/storage/media'
 
@@ -150,15 +151,22 @@ export default async function ThreadPage({
   const { id } = await params
 
   const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const user = await getSessionUser()
   if (!user) redirect('/login')
 
-  const { data: convRaw, error: convErr } = await supabase
-    .from('conversations')
-    .select(
-      `
+  // Conversa, mensagens, contexto de cobrança e histórico do motor dependem
+  // só do `id` → um único round-trip em paralelo (antes: 4 awaits em série a
+  // ~140ms de rede cada, VPS Iowa ↔ Supabase São Paulo).
+  const [
+    { data: convRaw, error: convErr },
+    { data: messagesRaw, error: msgErr },
+    { data: debtorData, error: debtorErr },
+    { data: motorRaw, error: motorErr },
+  ] = await Promise.all([
+    supabase
+      .from('conversations')
+      .select(
+        `
         id, unit_id, status, routing, handoff_reason, priority,
         last_inbound_at, customer_window_expires_at, assigned_operator_id,
         contact:contacts(id, wa_id, name, profile, crm_external_id),
@@ -168,9 +176,20 @@ export default async function ThreadPage({
         ),
         unit:units(id, code, name)
       `,
-    )
-    .eq('id', id)
-    .maybeSingle()
+      )
+      .eq('id', id)
+      .maybeSingle(),
+    supabase
+      .from('messages')
+      .select(
+        'id, conversation_id, wa_message_id, direction, type, payload, status, error, sent_by, operator_id, created_at',
+      )
+      .eq('conversation_id', id)
+      .order('created_at', { ascending: true })
+      .limit(100),
+    supabase.rpc('chat_debtor_context', { p_conversation_id: id }),
+    supabase.rpc('chat_motor_history', { p_conversation_id: id }),
+  ])
 
   if (convErr) {
     console.error('[inbox/[id]] conversation lookup error', convErr)
@@ -180,15 +199,6 @@ export default async function ThreadPage({
 
   // Supabase's typed return is structural — we trust the select shape.
   const conversation = convRaw as unknown as ConversationView
-
-  const { data: messagesRaw, error: msgErr } = await supabase
-    .from('messages')
-    .select(
-      'id, conversation_id, wa_message_id, direction, type, payload, status, error, sent_by, operator_id, created_at',
-    )
-    .eq('conversation_id', id)
-    .order('created_at', { ascending: true })
-    .limit(100)
 
   if (msgErr) {
     console.error('[inbox/[id]] messages lookup error', msgErr)
@@ -207,6 +217,9 @@ export default async function ThreadPage({
     string,
     { url: string | null; pending: boolean }
   > = {}
+  // Um único createSignedUrls pra todas as mídias da thread (antes: um
+  // round-trip serial por mídia — p90 = 3 mídias, máx 47 → timeout 60s).
+  const pathByMsg: Record<string, string> = {}
   for (const m of messages) {
     const info = extractMediaInfo(m.payload, m.type)
     if (!info) continue
@@ -218,17 +231,20 @@ export default async function ThreadPage({
       mediaUrlMap[m.id] = { url: null, pending: ageMs < PENDING_WINDOW_MS }
       continue
     }
-    const url = await createMediaSignedUrl(supabase, sub.storage_path, 3600)
-    mediaUrlMap[m.id] = { url, pending: false }
+    pathByMsg[m.id] = sub.storage_path
+  }
+  const signed = await createMediaSignedUrls(
+    supabase,
+    Object.values(pathByMsg),
+    3600,
+  )
+  for (const [msgId, path] of Object.entries(pathByMsg)) {
+    mediaUrlMap[msgId] = { url: signed.get(path) ?? null, pending: false }
   }
 
   // Debtor/cobrança context (read-only, unit-scoped RPC → single JSONB object).
   // Failures degrade to null — the panel shows honest conversation-only context.
   let debtor: DebtorContext | null = null
-  const { data: debtorData, error: debtorErr } = await supabase.rpc(
-    'chat_debtor_context',
-    { p_conversation_id: id },
-  )
   if (debtorErr) {
     console.error('[inbox/[id]] debtor context error', debtorErr)
   } else if (debtorData) {
@@ -265,10 +281,6 @@ export default async function ThreadPage({
     body?: string | null
     example?: unknown
   }
-  const { data: motorRaw, error: motorErr } = await supabase.rpc(
-    'chat_motor_history',
-    { p_conversation_id: id },
-  )
   if (motorErr) {
     console.error('[inbox/[id]] motor history error', motorErr)
   } else if (Array.isArray(motorRaw) && motorRaw.length > 0) {
