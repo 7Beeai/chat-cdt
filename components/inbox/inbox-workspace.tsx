@@ -242,7 +242,9 @@ export function InboxWorkspace({
     const refreshIfVisible = () => {
       if (document.visibilityState === 'visible') router.refresh()
     }
-    const t = setInterval(refreshIfVisible, 120_000)
+    // 5 min (era 2): o realtime é o caminho principal; cada refresh re-executa
+    // os 3 layouts no servidor pra cada operador (lentidão 03/09, docs/19).
+    const t = setInterval(refreshIfVisible, 300_000)
     document.addEventListener('visibilitychange', refreshIfVisible)
     return () => {
       clearInterval(t)

@@ -219,12 +219,12 @@ export function VendasWorkspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phoneRowSet])
 
-  // -- Polling de fallback (60s, aba visível) ---------------------------------
+  // -- Polling de fallback (3 min, aba visível; era 60s — docs/19) -----------
   useEffect(() => {
     const refreshIfVisible = () => {
       if (document.visibilityState === 'visible') router.refresh()
     }
-    const t = setInterval(refreshIfVisible, 60_000)
+    const t = setInterval(refreshIfVisible, 180_000)
     document.addEventListener('visibilitychange', refreshIfVisible)
     return () => {
       clearInterval(t)
