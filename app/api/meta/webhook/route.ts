@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'node:crypto'
 import { createServiceClient } from '@/lib/supabase/service'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import {
   downloadAndStore,
   extractMediaInfo,
@@ -16,6 +17,40 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 // --- GET: verification handshake -----------------------------------------
+
+// --- Cache em memória de chat_phone_numbers ---------------------------------
+// A Meta manda um evento de status por mensagem (~200k/dia); cada um fazia um
+// SELECT em chat_phone_numbers a ~140ms de rede (VPS ↔ Supabase). O cadastro
+// muda raríssimas vezes (onboarding de unidade), então 5 min de TTL por
+// phone_number_id é seguro. Resultado negativo também é cacheado (números de
+// cobrança sem app do chat, ver docs/12) — com TTL menor, pra que um número
+// recém-cadastrado passe a ser aceito em ≤1 min.
+type PhoneRow = { id: string; waba_id: string; wabas: { unit_id: string } }
+type PhoneLookup = { data: PhoneRow | null; error: unknown }
+const PHONE_TTL_MS = 5 * 60 * 1000
+const PHONE_NEG_TTL_MS = 60 * 1000
+const phoneCache = new Map<string, { until: number; row: PhoneRow | null }>()
+
+async function lookupPhoneCached(
+  supabase: SupabaseClient,
+  phoneNumberId: string,
+): Promise<PhoneLookup> {
+  const hit = phoneCache.get(phoneNumberId)
+  if (hit && hit.until > Date.now()) return { data: hit.row, error: null }
+  const { data, error } = await supabase
+    .from('chat_phone_numbers')
+    .select('id, waba_id, wabas!inner(unit_id)')
+    .eq('phone_number_id', phoneNumberId)
+    .maybeSingle()
+  if (error) return { data: null, error } // erro não entra no cache
+  const row = (data as unknown as PhoneRow | null) ?? null
+  phoneCache.set(phoneNumberId, {
+    until: Date.now() + (row ? PHONE_TTL_MS : PHONE_NEG_TTL_MS),
+    row,
+  })
+  return { data: row, error: null }
+}
+
 export async function GET(req: NextRequest) {
   const url = new URL(req.url)
   const mode = url.searchParams.get('hub.mode')
@@ -107,11 +142,10 @@ async function processEnvelope(body: WebhookEnvelope) {
       if (!phoneNumberId) continue
 
       // Resolve phone -> waba -> unit.
-      const { data: phone, error: phoneErr } = await supabase
-        .from('chat_phone_numbers')
-        .select('id, waba_id, wabas!inner(unit_id)')
-        .eq('phone_number_id', phoneNumberId)
-        .maybeSingle()
+      const { data: phone, error: phoneErr } = await lookupPhoneCached(
+        supabase,
+        phoneNumberId,
+      )
 
       if (phoneErr) {
         console.error('[webhook] phone lookup error', phoneErr)
@@ -124,7 +158,7 @@ async function processEnvelope(body: WebhookEnvelope) {
         )
         continue
       }
-      const unitId = (phone as any).wabas.unit_id as string
+      const unitId = phone.wabas.unit_id
 
       for (const msg of v.messages ?? []) {
         await handleInboundMessage(supabase, {
