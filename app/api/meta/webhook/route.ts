@@ -310,11 +310,28 @@ async function getOrCreateOpenConversation(
 ): Promise<string | null> {
   const { data: existing } = await supabase
     .from('conversations')
-    .select('id')
+    .select('id, phone_number_id')
     .eq('contact_id', args.contactId)
     .eq('status', 'open')
     .maybeSingle()
-  if (existing) return existing.id
+  if (existing) {
+    // A conversa aberta fica presa ao número em que foi criada. Se o cliente
+    // escreveu para OUTRO número da mesma unidade (vendas/Josi, 2º número de
+    // cobrança), o envio do operador saía pelo número antigo e a Meta
+    // recusava com 131047 "fora da janela 24h" mesmo com inbound de minutos
+    // atrás (Caraguá/BH Oeste, 2026-09-08). Re-aponta pro número que recebeu:
+    // é o único com janela aberta para este cliente.
+    if (existing.phone_number_id !== args.phoneRowId) {
+      const { error: repinErr } = await supabase
+        .from('conversations')
+        .update({ phone_number_id: args.phoneRowId })
+        .eq('id', existing.id)
+      if (repinErr) {
+        console.error('[webhook] conversation phone re-pin failed', repinErr)
+      }
+    }
+    return existing.id
+  }
 
   const { data: created, error: insErr } = await supabase
     .from('conversations')
