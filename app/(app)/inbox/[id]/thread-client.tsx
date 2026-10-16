@@ -13,6 +13,7 @@ import {
   CheckCheck,
   Clock,
   Paperclip,
+  Plus,
   Reply,
   SmilePlus,
   TriangleAlert,
@@ -20,8 +21,15 @@ import {
   UserRound,
 } from 'lucide-react'
 
+import dynamic from 'next/dynamic'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
+import {
+  Categories as EmojiCategories,
+  EmojiStyle,
+  Theme as EmojiTheme,
+  type EmojiClickData,
+} from 'emoji-picker-react'
 
 import { createClient } from '@/lib/supabase/client'
 import { ensureRealtimeAuth } from '@/lib/supabase/realtime'
@@ -44,9 +52,23 @@ type MediaState = { url: string | null; pending: boolean }
 const MEDIA_TYPES = new Set(['image', 'audio', 'video', 'document', 'sticker'])
 const GROUP_WINDOW_MS = 5 * 60 * 1000
 
-// Os 6 emojis rápidos do WhatsApp. A Cloud API aceita qualquer emoji; o
-// conjunto fixo mantém a UI enxuta e igual ao que o cliente conhece.
-const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'] as const
+// Fileira rápida: os 6 do WhatsApp + 💚 (pedido da operação, 16/10). O "+"
+// abre a galeria completa — a Cloud API aceita qualquer emoji.
+const QUICK_REACTIONS = ['👍', '❤️', '💚', '😂', '😮', '😢', '🙏'] as const
+
+// Galeria completa (emoji-picker-react, ~100KB): só carrega no 1º clique no "+".
+const EmojiPicker = dynamic(() => import('emoji-picker-react'), { ssr: false })
+const EMOJI_CATEGORIES = [
+  { category: EmojiCategories.SUGGESTED, name: 'Recentes' },
+  { category: EmojiCategories.SMILEYS_PEOPLE, name: 'Carinhas e pessoas' },
+  { category: EmojiCategories.ANIMALS_NATURE, name: 'Animais e natureza' },
+  { category: EmojiCategories.FOOD_DRINK, name: 'Comida e bebida' },
+  { category: EmojiCategories.TRAVEL_PLACES, name: 'Viagem e lugares' },
+  { category: EmojiCategories.ACTIVITIES, name: 'Atividades' },
+  { category: EmojiCategories.OBJECTS, name: 'Objetos' },
+  { category: EmojiCategories.SYMBOLS, name: 'Símbolos' },
+  { category: EmojiCategories.FLAGS, name: 'Bandeiras' },
+]
 
 /** Reações agrupadas por mensagem-alvo: última do cliente e última nossa. */
 type ReactionPair = { in?: string; out?: string }
@@ -867,7 +889,13 @@ function Bubble({
     !msg.id.startsWith('ml-') &&
     !msg.id.startsWith('mi-')
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [galleryOpen, setGalleryOpen] = useState(false)
   const hasReaction = !!(reaction?.in || reaction?.out)
+  const pickEmoji = (emoji: string) => {
+    setPickerOpen(false)
+    setGalleryOpen(false)
+    onReact?.(msg, reaction?.out === emoji ? '' : emoji)
+  }
 
   // Cantos: pequenos quando "atachado" a um bubble vizinho do mesmo grupo,
   // ou no canto da cauda (only/last). Os demais permanecem rounded-2xl.
@@ -1020,10 +1048,7 @@ function Bubble({
                     key={emoji}
                     type="button"
                     role="menuitem"
-                    onClick={() => {
-                      setPickerOpen(false)
-                      onReact?.(msg, reaction?.out === emoji ? '' : emoji)
-                    }}
+                    onClick={() => pickEmoji(emoji)}
                     className={cn(
                       'flex size-8 items-center justify-center rounded-full text-[18px] leading-none transition-transform hover:scale-125 hover:bg-secondary',
                       reaction?.out === emoji && 'bg-sky-400/20',
@@ -1033,6 +1058,50 @@ function Bubble({
                     {emoji}
                   </button>
                 ))}
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setPickerOpen(false)
+                    setGalleryOpen(true)
+                  }}
+                  className="ml-0.5 flex size-7 items-center justify-center rounded-full border border-border/60 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                  title="Mais emojis"
+                  aria-label="Abrir galeria de emojis"
+                >
+                  <Plus className="size-4" />
+                </button>
+              </div>
+            )}
+            {/* Galeria completa: overlay fixo (não depende da posição da
+                bolha na thread); clique fora ou Esc fecha. */}
+            {galleryOpen && (
+              <div
+                className="fixed inset-0 z-50 flex items-center justify-center bg-background/60 backdrop-blur-[1px]"
+                onClick={() => setGalleryOpen(false)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') setGalleryOpen(false)
+                }}
+              >
+                <div
+                  className="overflow-hidden rounded-2xl border border-border shadow-2xl"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <EmojiPicker
+                    onEmojiClick={(d: EmojiClickData) => pickEmoji(d.emoji)}
+                    theme={EmojiTheme.DARK}
+                    emojiStyle={EmojiStyle.NATIVE}
+                    // lazy=true deixa a grade vazia dentro do overlay fixo
+                    // (IntersectionObserver não dispara); nativo é leve sem lazy.
+                    lazyLoadEmojis={false}
+                    autoFocusSearch
+                    searchPlaceholder="Buscar emoji"
+                    previewConfig={{ showPreview: false }}
+                    categories={EMOJI_CATEGORIES}
+                    width={360}
+                    height={440}
+                  />
+                </div>
               </div>
             )}
           </div>
