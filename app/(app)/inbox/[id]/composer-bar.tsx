@@ -4,10 +4,13 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useImperativeHandle,
   useRef,
   useState,
+  type ClipboardEvent,
   type FormEvent,
   type KeyboardEvent,
+  type Ref,
 } from 'react'
 import {
   AlertOctagon,
@@ -46,6 +49,11 @@ type Props = {
   /** Set when the conversation belongs to another operator (read-only). */
   lockedBy?: string | null
   onTakeOver?: () => void
+  /**
+   * Handle imperativo: a thread chama pickFile() no drop de arquivo (drag-
+   * and-drop) e o composer trata exatamente como o clipe (chip + legenda).
+   */
+  ref?: Ref<ComposerHandle>
   onOptimisticAppend: (msg: Message) => void
   onOptimisticPatch: (tempId: string, patch: Partial<Message>) => void
   onOptimisticDrop: (tempId: string) => void
@@ -55,6 +63,11 @@ type Props = {
     type: string,
     storagePath: string | null,
   ) => void
+}
+
+export type ComposerHandle = {
+  /** Adota um arquivo como anexo (mesmas validações do clipe). */
+  pickFile: (file: File) => void
 }
 
 const MAX_CHARS = 4096
@@ -69,7 +82,47 @@ const MEDIA_ACCEPT =
   'application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,' +
   'text/plain,text/csv'
 
+// Whitelist como Set pra validar drop/paste (o <input accept> só filtra o
+// seletor; arquivo arrastado ou colado chega com qualquer MIME).
+const MEDIA_MIMES = new Set(MEDIA_ACCEPT.split(','))
+
 type MediaKind = 'image' | 'video' | 'audio' | 'document'
+
+/**
+ * Pega o primeiro arquivo de um DataTransfer (drop ou clipboard). Print
+ * colado (Ctrl+V) vem como item kind='file' type='image/png' sem nome útil
+ * ("image.png"); renomeamos pra ficar legível no chip e no WhatsApp.
+ */
+export function firstFileFromTransfer(dt: DataTransfer | null): {
+  file: File | null
+  count: number
+} {
+  if (!dt) return { file: null, count: 0 }
+  const files: File[] = []
+  if (dt.files && dt.files.length > 0) {
+    for (let i = 0; i < dt.files.length; i++) files.push(dt.files[i])
+  } else if (dt.items) {
+    for (let i = 0; i < dt.items.length; i++) {
+      const it = dt.items[i]
+      if (it.kind !== 'file') continue
+      const f = it.getAsFile()
+      if (f) files.push(f)
+    }
+  }
+  const first = files[0] ?? null
+  if (!first) return { file: null, count: 0 }
+  if (first.type.startsWith('image/') && /^image\.\w+$/i.test(first.name)) {
+    const ext = first.type.split('/')[1] === 'jpeg' ? 'jpg' : first.type.split('/')[1]
+    const d = new Date()
+    const pad = (n: number) => String(n).padStart(2, '0')
+    const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(d.getHours())}h${pad(d.getMinutes())}`
+    return {
+      file: new File([first], `print_${stamp}.${ext}`, { type: first.type }),
+      count: files.length,
+    }
+  }
+  return { file: first, count: files.length }
+}
 
 function mediaKindOf(mime: string): MediaKind {
   if (mime.startsWith('image/')) return 'image'
@@ -100,6 +153,7 @@ export function ComposerBar({
   contactFirstName,
   lockedBy,
   onTakeOver,
+  ref,
   onOptimisticAppend,
   onOptimisticPatch,
   onOptimisticDrop,
@@ -123,18 +177,53 @@ export function ComposerBar({
     reset: recReset,
   } = useAudioRecorder()
 
-  const onPickFile = useCallback((picked: File | null) => {
-    if (!picked) return
-    const kind = mediaKindOf(picked.type)
-    const limit = MEDIA_LIMITS[kind]
-    if (picked.size > limit) {
-      toast.error(
-        `Arquivo grande demais (${formatBytes(picked.size)}). Limite para ${kind === 'image' ? 'imagem' : kind === 'video' ? 'vídeo' : kind === 'audio' ? 'áudio' : 'documento'}: ${formatBytes(limit)}.`,
-      )
-      return
-    }
-    setFile(picked)
-  }, [])
+  const onPickFile = useCallback(
+    (picked: File | null) => {
+      if (!picked) return
+      // Drop/paste chegam mesmo com o botão de clipe desabilitado: os mesmos
+      // gates do botão valem aqui.
+      if (!insideWindow) {
+        toast.error('Fora da janela de 24h. Envie um template para retomar.')
+        return
+      }
+      if (recActive) {
+        toast.error('Finalize ou cancele a gravação antes de anexar.')
+        return
+      }
+      if (!MEDIA_MIMES.has(picked.type)) {
+        toast.error(
+          `Tipo de arquivo não suportado pelo WhatsApp${picked.type ? ` (${picked.type})` : ''}.`,
+        )
+        return
+      }
+      const kind = mediaKindOf(picked.type)
+      const limit = MEDIA_LIMITS[kind]
+      if (picked.size > limit) {
+        toast.error(
+          `Arquivo grande demais (${formatBytes(picked.size)}). Limite para ${kind === 'image' ? 'imagem' : kind === 'video' ? 'vídeo' : kind === 'audio' ? 'áudio' : 'documento'}: ${formatBytes(limit)}.`,
+        )
+        return
+      }
+      setFile(picked)
+      requestAnimationFrame(() => textareaRef.current?.focus())
+    },
+    [insideWindow, recActive],
+  )
+
+  // Arquivo solto na thread (drag-and-drop) → mesmo caminho do clipe.
+  useImperativeHandle(ref, () => ({ pickFile: onPickFile }), [onPickFile])
+
+  // Ctrl+V com arquivo/print no clipboard → anexo. Texto colado segue normal.
+  const onPaste = useCallback(
+    (e: ClipboardEvent<HTMLTextAreaElement>) => {
+      const { file: pasted, count } = firstFileFromTransfer(e.clipboardData)
+      if (!pasted) return
+      e.preventDefault()
+      if (count > 1) toast.info('Um arquivo por vez — anexei o primeiro.')
+      onPickFile(pasted)
+    },
+    [onPickFile],
+  )
 
   // Auto-grow do textarea conforme o usuário digita.
   useEffect(() => {
@@ -578,12 +667,13 @@ export function ComposerBar({
             value={text}
             onChange={(e) => setText(e.target.value.slice(0, MAX_CHARS))}
             onKeyDown={onKeyDown}
+            onPaste={onPaste}
             placeholder={
               !insideWindow
                 ? 'Janela 24h expirou — clique no ícone de templates.'
                 : file
                   ? 'Legenda do anexo (opcional). Enter envia.'
-                  : 'Mensagem para o cliente. Enter envia · Shift+Enter quebra linha.'
+                  : 'Mensagem para o cliente. Enter envia · Shift+Enter quebra linha · Ctrl+V cola print.'
             }
             rows={1}
             // Fora da janela o campo TRAVA (não só o envio) — operador

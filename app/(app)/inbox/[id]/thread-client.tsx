@@ -6,12 +6,15 @@ import {
   useMemo,
   useRef,
   useState,
+  type DragEvent,
 } from 'react'
 import {
   Check,
   CheckCheck,
   Clock,
+  Paperclip,
   Reply,
+  SmilePlus,
   TriangleAlert,
   Sparkles,
   UserRound,
@@ -27,7 +30,11 @@ import { dateDividerLabel, dateKey } from '@/lib/format/time'
 import { cn } from '@/lib/utils'
 
 import { takeOverConversation } from './actions'
-import { ComposerBar } from './composer-bar'
+import {
+  ComposerBar,
+  firstFileFromTransfer,
+  type ComposerHandle,
+} from './composer-bar'
 import { MediaBubble } from './media-bubble'
 import type { ConversationView, Message } from './page'
 import { ThreadHeader } from './thread-header'
@@ -36,6 +43,39 @@ type MediaState = { url: string | null; pending: boolean }
 
 const MEDIA_TYPES = new Set(['image', 'audio', 'video', 'document', 'sticker'])
 const GROUP_WINDOW_MS = 5 * 60 * 1000
+
+// Os 6 emojis rápidos do WhatsApp. A Cloud API aceita qualquer emoji; o
+// conjunto fixo mantém a UI enxuta e igual ao que o cliente conhece.
+const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'] as const
+
+/** Reações agrupadas por mensagem-alvo: última do cliente e última nossa. */
+type ReactionPair = { in?: string; out?: string }
+
+function reactionTarget(msg: Message): { messageId: string; emoji: string } | null {
+  if (msg.type !== 'reaction') return null
+  const r = (msg.payload as Record<string, unknown> | null)?.reaction as
+    | { message_id?: string; emoji?: string }
+    | undefined
+  if (!r?.message_id) return null
+  return { messageId: r.message_id, emoji: r.emoji ?? '' }
+}
+
+/**
+ * Mapa wa_message_id → {in, out}. Percorre em ordem cronológica: a reação
+ * mais recente de cada lado vence; emoji vazio = reação removida.
+ */
+function buildReactionMap(messages: Message[]): Map<string, ReactionPair> {
+  const map = new Map<string, ReactionPair>()
+  for (const m of messages) {
+    const t = reactionTarget(m)
+    if (!t) continue
+    const pair = map.get(t.messageId) ?? {}
+    if (t.emoji) pair[m.direction] = t.emoji
+    else delete pair[m.direction]
+    map.set(t.messageId, pair)
+  }
+  return map
+}
 
 type SenderTone = 'in' | 'out-ai' | 'out-operator' | 'out-system'
 
@@ -66,7 +106,15 @@ function buildThreadItems(messages: Message[]): ThreadItem[] {
   let lastDateKey = ''
   let currentGroup: MessageGroup | null = null
 
+  // Reação cuja mensagem-alvo está na thread vira chip na bolha alvo, não
+  // bolha própria. Alvo fora do carregado (histórico antigo) mantém a bolha
+  // "Reagiu com X" de antes, pra não sumir informação.
+  const waIds = new Set(messages.map((m) => m.wa_message_id).filter(Boolean))
+
   for (const m of messages) {
+    const t = reactionTarget(m)
+    if (t && waIds.has(t.messageId)) continue
+
     const dKey = dateKey(m.created_at)
     if (dKey !== lastDateKey) {
       out.push({
@@ -422,6 +470,8 @@ export function ThreadClient({
   const contactFirstName =
     (conversation.contact?.name ?? '').trim().split(/\s+/)[0] || 'cliente'
   const items = useMemo(() => buildThreadItems(messages), [messages])
+  const reactions = useMemo(() => buildReactionMap(messages), [messages])
+
 
   // Hybrid exclusivity: if the conversation belongs to ANOTHER operator, the
   // composer is read-only here (only the owner can reply) until taken over.
@@ -443,8 +493,142 @@ export function ThreadClient({
     })()
   }, [conversation.id, router])
 
+  // -- Drag-and-drop de arquivo na área da conversa → composer (chip + legenda).
+  // Counter porque dragenter/dragleave disparam em cada filho atravessado.
+  const [dropping, setDropping] = useState(false)
+  const dragDepthRef = useRef(0)
+  const composerRef = useRef<ComposerHandle>(null)
+  const canDrop = !monitor && !lockedBy
+  const hasFiles = (e: DragEvent) =>
+    Array.from(e.dataTransfer?.types ?? []).includes('Files')
+  const onDragEnter = useCallback(
+    (e: DragEvent) => {
+      if (!canDrop || !hasFiles(e)) return
+      e.preventDefault()
+      dragDepthRef.current += 1
+      setDropping(true)
+    },
+    [canDrop],
+  )
+  const onDragOver = useCallback(
+    (e: DragEvent) => {
+      if (!canDrop || !hasFiles(e)) return
+      e.preventDefault()
+      e.dataTransfer.dropEffect = 'copy'
+    },
+    [canDrop],
+  )
+  const onDragLeave = useCallback((e: DragEvent) => {
+    if (!hasFiles(e)) return
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1)
+    if (dragDepthRef.current === 0) setDropping(false)
+  }, [])
+  const onDrop = useCallback(
+    (e: DragEvent) => {
+      if (!canDrop || !hasFiles(e)) return
+      e.preventDefault()
+      dragDepthRef.current = 0
+      setDropping(false)
+      const { file, count } = firstFileFromTransfer(e.dataTransfer)
+      if (!file) return
+      if (count > 1) toast.info('Um arquivo por vez — anexei o primeiro.')
+      composerRef.current?.pickFile(file)
+    },
+    [canDrop],
+  )
+
+  // -- Reagir a uma mensagem do cliente (Cloud API type=reaction). Otimista:
+  // a linha 'reaction' entra local na hora; o eco realtime faz merge por
+  // type+operator (findEchoIdx) e o 409/erro remove a linha com toast.
+  const sendReaction = useCallback(
+    async (target: Message, emoji: string) => {
+      if (!target.wa_message_id) return
+      const tempId = `temp-${crypto.randomUUID()}`
+      const optimistic: Message = {
+        id: tempId,
+        conversation_id: conversation.id,
+        wa_message_id: null,
+        direction: 'out',
+        type: 'reaction',
+        payload: { reaction: { message_id: target.wa_message_id, emoji } },
+        status: 'pending',
+        error: null,
+        sent_by: 'operator',
+        operator_id: userId,
+        created_at: new Date().toISOString(),
+      }
+      setMessages((prev) => [...prev, optimistic])
+      try {
+        const r = await fetch('/api/messages/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            conversationId: conversation.id,
+            type: 'reaction',
+            reaction: { messageId: target.wa_message_id, emoji },
+          }),
+        })
+        if (r.ok) {
+          const data = (await r.json()) as { wa_message_id?: string }
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === tempId
+                ? { ...m, wa_message_id: data.wa_message_id ?? null, status: 'sent' }
+                : m,
+            ),
+          )
+          return
+        }
+        setMessages((prev) => prev.filter((m) => m.id !== tempId))
+        if (r.status === 409) {
+          toast.error('Fora da janela de 24h — não dá para reagir.')
+          router.refresh()
+          return
+        }
+        let detail = ''
+        try {
+          const body = (await r.json()) as { details?: unknown }
+          detail =
+            typeof body?.details === 'object' && body.details
+              ? JSON.stringify(body.details).slice(0, 200)
+              : ''
+        } catch {
+          // ignore
+        }
+        toast.error(`Falha ao reagir: ${detail || `erro ${r.status}`}`)
+      } catch (err) {
+        setMessages((prev) => prev.filter((m) => m.id !== tempId))
+        toast.error(
+          'Falha de rede ao reagir. ' +
+            (err instanceof Error ? err.message : ''),
+        )
+      }
+    },
+    [conversation.id, userId, router],
+  )
+
   return (
-    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+    <div
+      className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden"
+      onDragEnter={onDragEnter}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
+      {/* Overlay do drag-and-drop: cobre header + thread + composer. */}
+      {dropping && (
+        <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-background/80 backdrop-blur-[2px]">
+          <div className="flex items-center gap-3 rounded-2xl border-2 border-dashed border-sky-400/60 bg-card/90 px-6 py-4 text-foreground shadow-lg">
+            <Paperclip className="size-5 text-sky-400" />
+            <div>
+              <p className="text-sm font-medium">Solte para anexar</p>
+              <p className="text-[12px] text-muted-foreground">
+                Imagem, PDF, planilha, documento ou áudio
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
       <ThreadHeader
         conv={conversation}
         contextOpen={contextOpen}
@@ -482,6 +666,12 @@ export function ThreadClient({
                   group={item}
                   mediaUrls={mediaUrls}
                   operatorNames={operatorNames}
+                  reactions={reactions}
+                  onReact={
+                    !monitor && !lockedBy && insideWindow
+                      ? sendReaction
+                      : undefined
+                  }
                 />
               ),
             )
@@ -502,6 +692,7 @@ export function ThreadClient({
           contactFirstName={contactFirstName}
           lockedBy={lockedBy}
           onTakeOver={handleTakeOver}
+          ref={composerRef}
           onOptimisticAppend={appendOptimistic}
           onOptimisticPatch={patchOptimistic}
           onOptimisticDrop={removeOptimistic}
@@ -566,14 +757,20 @@ function DateDivider({ label }: { label: string }) {
 
 // ---------------------------------------------------------------------------
 
+type ReactHandler = (target: Message, emoji: string) => void
+
 function MessageGroupView({
   group,
   mediaUrls,
   operatorNames,
+  reactions,
+  onReact,
 }: {
   group: MessageGroup
   mediaUrls: Record<string, MediaState>
   operatorNames: Record<string, string>
+  reactions: Map<string, ReactionPair>
+  onReact?: ReactHandler
 }) {
   const align = group.tone === 'in' ? 'items-start' : 'items-end'
   const groupGap = 'gap-[3px]' // intra-grupo: bubbles colados
@@ -610,6 +807,8 @@ function MessageGroupView({
             position={position}
             media={mediaUrls[m.id] ?? { url: null, pending: false }}
             showTimeAndStatus={isLastOfGroup}
+            reaction={m.wa_message_id ? reactions.get(m.wa_message_id) : undefined}
+            onReact={onReact}
           />
         )
       })}
@@ -646,15 +845,29 @@ function Bubble({
   position,
   media,
   showTimeAndStatus,
+  reaction,
+  onReact,
 }: {
   msg: Message
   tone: SenderTone
   position: BubblePosition
   media: MediaState
   showTimeAndStatus: boolean
+  reaction?: ReactionPair
+  onReact?: ReactHandler
 }) {
   const isIn = tone === 'in'
   const isMedia = MEDIA_TYPES.has(msg.type)
+  // Reagir: só a mensagem do cliente, com wamid real (linhas sintéticas
+  // ml-/mi- do histórico do motor não existem na Meta).
+  const canReact =
+    !!onReact &&
+    isIn &&
+    !!msg.wa_message_id &&
+    !msg.id.startsWith('ml-') &&
+    !msg.id.startsWith('mi-')
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const hasReaction = !!(reaction?.in || reaction?.out)
 
   // Cantos: pequenos quando "atachado" a um bubble vizinho do mesmo grupo,
   // ou no canto da cauda (only/last). Os demais permanecem rounded-2xl.
@@ -692,8 +905,19 @@ function Bubble({
   )
 
   return (
-    <div className="w-full max-w-[88%] sm:max-w-[78%] md:max-w-[72%]">
-      <div className={cn('flex w-full', isIn ? 'justify-start' : 'justify-end')}>
+    <div
+      className={cn(
+        'w-full max-w-[88%] sm:max-w-[78%] md:max-w-[72%]',
+        hasReaction && 'mb-3',
+      )}
+    >
+      <div
+        className={cn(
+          'group/row relative flex w-full items-center gap-1',
+          isIn ? 'justify-start' : 'justify-end',
+        )}
+        onMouseLeave={() => setPickerOpen(false)}
+      >
         <div className={bubbleClass}>
           {isMedia ? (
             <MediaBubble
@@ -736,7 +960,83 @@ function Bubble({
                 {label}
               </div>
             ))}
+
+          {/* Chip de reação colado no pé da bolha, como no WhatsApp: a do
+              cliente e a nossa (ciano); clicar na nossa remove. */}
+          {hasReaction && (
+            <div
+              className={cn(
+                'absolute -bottom-3 flex items-center gap-0.5',
+                isIn ? 'left-2' : 'right-2',
+              )}
+            >
+              {reaction?.in && (
+                <span
+                  className="rounded-full border border-border/60 bg-card px-1.5 py-px text-[13px] leading-5 shadow-sm"
+                  title="Reação do cliente"
+                >
+                  {reaction.in}
+                </span>
+              )}
+              {reaction?.out && (
+                <button
+                  type="button"
+                  disabled={!canReact}
+                  onClick={() => onReact?.(msg, '')}
+                  className="rounded-full border border-sky-400/40 bg-card px-1.5 py-px text-[13px] leading-5 shadow-sm transition-colors enabled:hover:border-destructive/60 disabled:cursor-default"
+                  title={canReact ? 'Sua reação — clique para remover' : 'Sua reação'}
+                >
+                  {reaction.out}
+                </button>
+              )}
+            </div>
+          )}
         </div>
+
+        {/* Reagir: botão aparece no hover da linha; abre a fileira de emojis. */}
+        {canReact && (
+          <div className="relative shrink-0">
+            <button
+              type="button"
+              onClick={() => setPickerOpen((v) => !v)}
+              aria-label="Reagir à mensagem"
+              title="Reagir"
+              className={cn(
+                'flex size-7 items-center justify-center rounded-full text-muted-foreground/70 transition-all hover:bg-secondary hover:text-foreground',
+                pickerOpen
+                  ? 'opacity-100'
+                  : 'opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100',
+              )}
+            >
+              <SmilePlus className="size-4" />
+            </button>
+            {pickerOpen && (
+              <div
+                role="menu"
+                className="absolute bottom-full left-0 z-20 mb-1 flex items-center gap-0.5 rounded-full border border-border bg-card px-1.5 py-1 shadow-lg"
+              >
+                {QUICK_REACTIONS.map((emoji) => (
+                  <button
+                    key={emoji}
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setPickerOpen(false)
+                      onReact?.(msg, reaction?.out === emoji ? '' : emoji)
+                    }}
+                    className={cn(
+                      'flex size-8 items-center justify-center rounded-full text-[18px] leading-none transition-transform hover:scale-125 hover:bg-secondary',
+                      reaction?.out === emoji && 'bg-sky-400/20',
+                    )}
+                    title={reaction?.out === emoji ? 'Remover reação' : `Reagir com ${emoji}`}
+                  >
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Para mídia: timestamp/status fora do bubble (não cabe inline) */}

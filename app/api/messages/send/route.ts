@@ -10,8 +10,15 @@ export const runtime = 'nodejs'
 const bodySchema = z
   .object({
     conversationId: z.string().uuid(),
-    type: z.enum(['text', 'template', 'image', 'document']),
+    type: z.enum(['text', 'template', 'image', 'document', 'reaction']),
     text: z.string().min(1).max(4096).optional(),
+    // Reação a uma mensagem (wamid). emoji vazio = remove a reação.
+    reaction: z
+      .object({
+        messageId: z.string().min(1).max(256),
+        emoji: z.string().max(16),
+      })
+      .optional(),
     template: z
       .object({
         name: z.string(),
@@ -39,6 +46,10 @@ const bodySchema = z
     (b) => (b.type !== 'image' && b.type !== 'document') || !!b.mediaUrl,
     { message: 'mediaUrl required for image/document', path: ['mediaUrl'] }
   )
+  .refine((b) => b.type !== 'reaction' || !!b.reaction, {
+    message: 'reaction required when type=reaction',
+    path: ['reaction'],
+  })
 
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
@@ -89,8 +100,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'conversation_incomplete' }, { status: 500 })
   }
 
-  // 24h window only enforced for free-form text. Templates can bypass.
-  if (body.type === 'text') {
+  // 24h window only enforced for free-form (text, reaction). Templates can bypass.
+  if (body.type === 'text' || body.type === 'reaction') {
     const exp = conv.customer_window_expires_at
       ? new Date(conv.customer_window_expires_at).getTime()
       : 0
@@ -121,6 +132,13 @@ export async function POST(req: NextRequest) {
     graphBody.image = { link: body.mediaUrl, caption: body.caption }
   } else if (body.type === 'document') {
     graphBody.document = { link: body.mediaUrl, caption: body.caption }
+  } else if (body.type === 'reaction') {
+    // Mesmo shape do inbound (payload.reaction.{message_id,emoji}) — a thread
+    // agrupa reações dos dois lados pelo mesmo caminho.
+    graphBody.reaction = {
+      message_id: body.reaction!.messageId,
+      emoji: body.reaction!.emoji,
+    }
   }
 
   const result = await graphSendMessage(phone.phone_number_id, graphBody)
