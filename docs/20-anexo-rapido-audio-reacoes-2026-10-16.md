@@ -41,3 +41,12 @@ Build e tsc limpos; lint sem novos avisos. UI verificada em dev com thread mock 
 chips dos dois lados, fallback "Reagiu com", picker, remoção do otimista em falha, overlay + drop,
 paste de png/pdf, recusa de tipo fora da whitelist. **Envio real de reação (Graph) ainda não testado
 em prod** — testar com número próprio após deploy.
+
+## Incidente no deploy (16/10, ~15:59–16:04 BRT)
+
+O push de `ab29c72` mudou `infra/nginx-chat-cdt.conf`; o `bin/deploy.sh` (disparado pelo Actions a cada
+push em main) regenera `/etc/nginx/sites-available/chat-cdt` a partir desse template quando ele muda — e o
+template no repo era o pré-certbot, **sem** `listen 443 ssl`/certificado. Resultado: `chat.cdt.7bee.ai`
+caiu no server block default do nginx (`supabase.7bee.top`, upstream 18888 recusado): cert errado + 502
+por ~5 min. Restaurado do backup `.bak-20261016` + fix do mic reaplicado. O template agora é o as-built
+(blocos certbot incluídos, porta como placeholder 3000), então a regeneração é idempotente.
