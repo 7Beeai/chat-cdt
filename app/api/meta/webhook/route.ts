@@ -130,8 +130,11 @@ function hasInboundMessages(body: WebhookEnvelope): boolean {
 
 // --- processing ----------------------------------------------------------
 
+type StatusRow = { id: string; status: WebhookStatus['status']; errors: unknown }
+
 async function processEnvelope(body: WebhookEnvelope) {
   const supabase = createServiceClient()
+  const statuses: StatusRow[] = []
 
   for (const entry of body.entry ?? []) {
     for (const change of entry.changes ?? []) {
@@ -170,10 +173,15 @@ async function processEnvelope(body: WebhookEnvelope) {
       }
 
       for (const st of v.statuses ?? []) {
-        await handleStatus(supabase, st)
+        statuses.push({ id: st.id, status: st.status, errors: st.errors ?? null })
       }
     }
   }
+
+  // Statuses em lote: UMA ida ao banco por envelope, só nas linhas que
+  // existem em messages. Antes era um UPDATE por status (6–7 mil/min nos
+  // slots do motor, quase todos no-op) e o processo saturava. Ver 0031.
+  if (statuses.length > 0) await applyStatuses(supabase, statuses)
 }
 
 async function handleInboundMessage(
@@ -360,16 +368,12 @@ async function getOrCreateOpenConversation(
   return null
 }
 
-async function handleStatus(
+async function applyStatuses(
   supabase: ReturnType<typeof createServiceClient>,
-  st: WebhookStatus
+  statuses: StatusRow[]
 ) {
-  const { error } = await supabase
-    .from('messages')
-    .update({
-      status: st.status,
-      error: st.errors ?? null,
-    })
-    .eq('wa_message_id', st.id)
-  if (error) console.error('[webhook] status update failed', error)
+  const { error } = await supabase.rpc('chat_apply_message_statuses', {
+    p_statuses: statuses,
+  })
+  if (error) console.error('[webhook] status batch failed', statuses.length, error)
 }

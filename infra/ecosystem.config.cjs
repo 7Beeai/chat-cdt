@@ -11,6 +11,13 @@ module.exports = {
       script: 'node_modules/next/dist/bin/next',
       args: `start -p ${PORT}`,
       env: { NODE_ENV: 'production', PORT },
+      // Cluster: o webhook da Meta chega a 6–7 mil chamadas/min nos slots do
+      // motor e 1 processo saturava (health check >6s, 502/504). Next é
+      // stateless; o que é em memória (cache de chat_phone_numbers, limite de
+      // tentativas do esqueci-senha) passa a ser por instância, o que é
+      // aceitável. PM2 balanceia na mesma porta.
+      exec_mode: 'cluster',
+      instances: 2,
       out_file: '/var/log/chat-cdt/out.log',
       error_file: '/var/log/chat-cdt/err.log',
       merge_logs: true,
