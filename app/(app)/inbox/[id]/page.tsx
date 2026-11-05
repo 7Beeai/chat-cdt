@@ -89,6 +89,7 @@ export type ConversationView = {
     | 'other_support'
     | 'boas_vindas'
     | null
+  handoff_context: string | null
   priority: number
   last_inbound_at: string | null
   customer_window_expires_at: string | null
@@ -167,7 +168,7 @@ export default async function ThreadPage({
       .from('conversations')
       .select(
         `
-        id, unit_id, status, routing, handoff_reason, priority,
+        id, unit_id, status, routing, handoff_reason, handoff_context, priority,
         last_inbound_at, customer_window_expires_at, assigned_operator_id,
         contact:contacts(id, wa_id, name, profile, crm_external_id),
         phone:chat_phone_numbers(

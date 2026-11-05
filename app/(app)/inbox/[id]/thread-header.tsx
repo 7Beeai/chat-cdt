@@ -189,6 +189,16 @@ export function ThreadHeader({
         </span>
       )}
 
+      {/* Motivo real do repasse (texto que a IA passou) — 0034 */}
+      {conv.handoff_context && (
+        <span
+          className="hidden max-w-[28rem] shrink items-center truncate rounded-md border border-border bg-secondary/60 px-2 py-0.5 text-[11px] text-muted-foreground lg:inline-flex"
+          title={conv.handoff_context}
+        >
+          {conv.handoff_context}
+        </span>
+      )}
+
       {/* Window pill */}
       <div
         className={cn(
