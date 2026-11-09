@@ -6,6 +6,7 @@ import { Menu } from 'lucide-react'
 
 import { PushSetup } from '@/components/push-setup'
 import { Sidebar, type SidebarUser } from '@/components/sidebar'
+import { SuporteWidget } from '@/components/suporte-widget'
 import { Sheet, SheetContent } from '@/components/ui/sheet'
 import { cn } from '@/lib/utils'
 
@@ -146,6 +147,8 @@ export function AppShell({
           {children}
         </div>
       </main>
+      {/* Ajuda (Suporte 7Bee): só aparece em unidade liberada — ver suporte-widget.tsx */}
+      <SuporteWidget isAdmin={isAdmin} />
     </div>
   )
 }
